@@ -17,3 +17,6 @@ uv.lock
 .venv
 venv/
 *.log
+
+# Environment variables
+.env
