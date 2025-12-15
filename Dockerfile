@@ -1,6 +1,8 @@
-FROM python:3.9.13-alpine3.16
-
-# Install Base Packages
-RUN apk --no-cache add bash curl 
-
-ENTRYPOINT ["sleep 1d"]
+FROM ghcr.io/astral-sh/uv:python3.13-alpine
+RUN apk --no-cache add curl
+WORKDIR /app
+COPY app ./app
+COPY pyproject.toml /app/pyproject.toml
+RUN uv sync
+EXPOSE 8000
+CMD ["uv", "run",  "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
