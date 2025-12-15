@@ -12,12 +12,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY pyproject.toml ./
-COPY app ./app
+# Copy requirements file
+COPY requirements.txt ./
 
 # Install dependencies using uv
-RUN uv pip install --system -r pyproject.toml
+RUN uv pip install --system -r requirements.txt
+
+# Copy application files
+COPY app ./app
 
 # Expose FastAPI port
 EXPOSE 8000
