@@ -1,5 +1,5 @@
 """
-SQLite service for database conversion and querying.
+SQLite utilities for database conversion and querying.
 """
 
 import sqlite3

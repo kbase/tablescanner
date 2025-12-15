@@ -8,9 +8,10 @@ from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
 
 from app.models import SearchRequest
-from app.services.minio_service import download_from_minio
-from app.services.cache_service import get_cache_paths, save_to_cache, is_cached
-from app.services.sqlite_service import convert_to_sqlite, query_sqlite
+from app.utils.workspace import get_object_info
+from app.utils.download import download_from_handle
+from app.utils.cache import get_cache_paths, save_to_cache, is_cached
+from app.utils.sqlite import convert_to_sqlite
 
 router = APIRouter()
 
@@ -41,28 +42,28 @@ def search(request: Request, search_request: SearchRequest):
     settings = request.app.state.settings
     token = settings.KB_SERVICE_AUTH_TOKEN
     cache_dir = Path(settings.CACHE_DIR)
+    workspace_url = settings.WORKSPACE_URL
 
     # TODO: Use the users token instead of a static one
 
-    # TODO: Get workspace data to retrieve filename
-    data = workspace.get(search_request.pangenome_id, {'auth': token})
-    filename = data.get('filename', f'{search_request.pangenome_id}.bin')
+    # Get object info from KBase Workspace
+    object_info = get_object_info(search_request.pangenome_id, token, workspace_url)
+    filename = object_info.get('filename', f'{search_request.pangenome_id}.bin')
+    handle_url = object_info.get('handle_url') or object_info.get('blobstore_url')
+
+    if not handle_url:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No handle/blobstore URL found for id: {search_request.pangenome_id}"
+        )
 
     # Get cache paths
     cache_file_path, sqlite_file_path = get_cache_paths(cache_dir, search_request.pangenome_id, filename)
 
     # Download and cache if not already cached
     if not is_cached(cache_file_path):
-        # Download binary file from MinIO
-        # TODO: Get MinIO URL from workspace data or settings
-        minio_url = data.get('minio_url')
-        if not minio_url:
-            raise HTTPException(
-                status_code=404,
-                detail=f"MinIO URL not found for id: {search_request.pangenome_id}"
-            )
-
-        binary_data = download_from_minio(minio_url, token)
+        # Download from handle/blobstore service
+        binary_data = download_from_handle(handle_url, token)
         save_to_cache(cache_file_path, binary_data)
 
     # Convert to SQLite if not already converted
@@ -70,7 +71,7 @@ def search(request: Request, search_request: SearchRequest):
         convert_to_sqlite(cache_file_path, sqlite_file_path)
 
     # Query the SQLite file with parameters
-    from app.services.sqlite_service import get_table_data
+    from app.utils.sqlite import get_table_data
     results = get_table_data(
         sqlite_file_path,
         table_name=search_request.table_name,

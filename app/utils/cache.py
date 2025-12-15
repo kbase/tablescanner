@@ -1,5 +1,5 @@
 """
-Cache service for managing local file caching.
+Cache utilities for managing local file caching.
 """
 
 from pathlib import Path

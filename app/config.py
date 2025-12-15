@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     KB_SERVICE_AUTH_TOKEN: str
     CACHE_DIR: str
 
+    # KBase Workspace settings
+    WORKSPACE_URL: str
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
