@@ -1,13 +1,7 @@
-FROM python:3.11-slim
+FROM ghcr.io/astral-sh/uv:python3.14-alpine
 
 # Install Base Packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN apk --no-cache add bash curl
 
 # Set working directory
 WORKDIR /app
