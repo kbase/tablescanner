@@ -1,42 +1,31 @@
 """
 TableScanner FastAPI Application
 
-Main application module with search endpoint.
+Main application factory module.
 """
 
-from fastapi import FastAPI, Query
-from typing import Optional
-
-app = FastAPI(
-    title="TableScanner",
-    description="API for table scanning operations",
-    version="1.0.0"
-)
+from fastapi import FastAPI
+from app.routes import router
 
 
-@app.get("/")
-async def root():
-    """Root endpoint returning service information."""
-    return {
-        "service": "TableScanner",
-        "version": "1.0.0",
-        "status": "running"
-    }
-
-
-@app.get("/search")
-async def search(id: str = Query(..., description="ID to search for")):
+def create_app() -> FastAPI:
     """
-    Search endpoint that takes an ID parameter.
+    Application factory function.
     
-    Args:
-        id: The ID to search for (required)
-        
     Returns:
-        A dictionary with search results
+        FastAPI: Configured FastAPI application instance
     """
-    return {
-        "query_id": id,
-        "status": "success",
-        "message": f"Search completed for ID: {id}"
-    }
+    app = FastAPI(
+        title="TableScanner",
+        description="API for table scanning operations",
+        version="1.0.0"
+    )
+    
+    # Include routes
+    app.include_router(router)
+    
+    return app
+
+
+# Create app instance for uvicorn
+app = create_app()

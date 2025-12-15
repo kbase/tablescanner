@@ -65,7 +65,8 @@ docker compose up --build
 .
 ├── app/
 │   ├── __init__.py
-│   └── main.py          # FastAPI application
+│   ├── main.py          # FastAPI application factory
+│   └── routes.py        # API route definitions
 ├── Dockerfile           # Docker build configuration
 ├── docker-compose.yml   # Docker Compose configuration
 ├── pyproject.toml       # Python project metadata
