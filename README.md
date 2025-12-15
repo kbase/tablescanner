@@ -5,9 +5,8 @@ FastAPI application for table scanning operations with MinIO storage integration
 # Local Dev
 
 ```
-uv venv
-uv sync
-uv run fastapi dev
+uv  bash scripts/dev.sh
+
 ```
 
 
