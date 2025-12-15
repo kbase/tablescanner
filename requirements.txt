@@ -1,4 +1,4 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
-KBUtilLib
+KBUtilLib  # KBase internal library - version managed by KBase infrastructure
 minio>=7.2.0
