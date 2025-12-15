@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn>=0.38.0",
     #"KBUtilLib",  # KBase internal library - version managed by KBase infrastructure
     "minio>=7.2.20",
+    "pydantic-settings>=2.0.0",
 ]
 
 [build-system]
