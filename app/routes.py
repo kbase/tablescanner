@@ -20,7 +20,7 @@ async def root():
 
 
 @router.get("/search")
-async def search(id: str = Query(..., description="ID to search for")):
+def search(id: str = Query(..., description="ID to search for")):
     """
     Search endpoint that takes an ID parameter.
     
