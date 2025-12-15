@@ -2,9 +2,9 @@
 name = "tablescanner"
 version = "1.0.0"
 description = "TableScanner FastAPI Application"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.124.4",
+    "fastapi[standard]>=0.124.4",
     "uvicorn>=0.38.0",
     #"KBUtilLib",  # KBase internal library - version managed by KBase infrastructure
     "minio>=7.2.20",
