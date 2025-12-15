@@ -2,6 +2,10 @@
 
 FastAPI application for table scanning operations with MinIO storage integration.
 
+# TODO
+* Look into duckdb or in memory db
+
+
 ## Features
 
 - FastAPI web framework
@@ -9,7 +13,8 @@ FastAPI application for table scanning operations with MinIO storage integration
 - Docker and Docker Compose support
 - Dependency management with uv
 - MinIO client integration
-- KBUtilLib utilities
+- KBUtilLib utilities (TODO)
+  
 
 ## Prerequisites
 
