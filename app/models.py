@@ -189,6 +189,14 @@ class PangenomesResponse(BaseModel):
         default_factory=list,
         description="List of available pangenomes"
     )
+    pangenome_count: int = Field(
+        0,
+        description="Total number of pangenomes"
+    )
+    auto_selected: Optional[str] = Field(
+        None,
+        description="Auto-selected pangenome ID when only one exists"
+    )
 
 
 class TableDataResponse(BaseModel):

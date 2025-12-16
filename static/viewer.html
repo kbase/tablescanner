@@ -244,6 +244,27 @@
             display: none;
         }
 
+        /* Cell links - for transformed identifiers (UniProt, KEGG, etc.) */
+        .ts-cell-link {
+            color: var(--ts-info);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--ts-info);
+            transition: all 0.15s;
+        }
+
+        .ts-cell-link:hover {
+            color: var(--ts-primary);
+            border-bottom-color: var(--ts-primary);
+            border-bottom-style: solid;
+        }
+
+        .ts-cell-link::after {
+            content: ' ↗';
+            font-size: 0.55em;
+            opacity: 0.6;
+            vertical-align: super;
+        }
+
         .ts-table tbody tr:hover {
             background: rgba(99, 102, 241, 0.1);
         }
@@ -802,6 +823,142 @@
             }
 
             // =================================================================
+            // CELL VALUE TRANSFORMATIONS
+            // Transform cell values into clickable links for known identifiers
+            // =================================================================
+
+            /**
+             * Pattern definitions for biological database identifiers.
+             * Each pattern has: regex to match, URL template, and display formatter.
+             */
+            const LINK_PATTERNS = [
+                // UniProt - matches UniProt:P12345 or column context
+                {
+                    name: 'uniprot',
+                    regex: /^(?:UniProt:)?([A-Z][0-9][A-Z0-9]{3}[0-9]|[A-Z][A-Z0-9]{5}[0-9](?:\-\d+)?)$/i,
+                    url: (id) => `https://www.uniprot.org/uniprotkb/${id}`,
+                    columns: ['uniprot_id', 'uniprot', 'swissprot_id']
+                },
+                // KEGG - matches KEGG:eco:b0001 or eco:b0001
+                {
+                    name: 'kegg',
+                    regex: /^(?:KEGG:)?([a-z]{2,4}:[a-zA-Z0-9_]+)$/i,
+                    url: (id) => `https://www.genome.jp/entry/${id}`,
+                    columns: ['kegg_id', 'kegg', 'kegg_gene']
+                },
+                // Gene Ontology - matches GO:0008150
+                {
+                    name: 'go',
+                    regex: /^(GO:\d{7})$/i,
+                    url: (id) => `https://amigo.geneontology.org/amigo/term/${id.toUpperCase()}`,
+                    columns: ['go_id', 'go_term', 'gene_ontology']
+                },
+                // Enzyme Commission - matches EC:1.2.3.4 or 1.2.3.4
+                {
+                    name: 'ec',
+                    regex: /^(?:EC:)?(\d+\.\d+\.\d+\.\d+)$/,
+                    url: (id) => `https://enzyme.expasy.org/EC/${id}`,
+                    columns: ['ec_number', 'ec_id', 'ec']
+                },
+                // PDB - matches PDB:1ABC or 1ABC (4 chars)
+                {
+                    name: 'pdb',
+                    regex: /^(?:PDB:)?([0-9][A-Z0-9]{3})$/i,
+                    url: (id) => `https://www.rcsb.org/structure/${id.toUpperCase()}`,
+                    columns: ['pdb_id', 'pdb', 'structure_id']
+                },
+                // RefSeq - matches NC_, NP_, NM_, XP_, etc.
+                {
+                    name: 'refseq',
+                    regex: /^([ANXYW][CGMPRTW]_\d+(?:\.\d+)?)$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/nuccore/${id}`,
+                    columns: ['refseq_id', 'refseq', 'accession']
+                },
+                // GenBank - matches typical accession patterns
+                {
+                    name: 'genbank',
+                    regex: /^([A-Z]{1,2}\d{5,6}(?:\.\d+)?)$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/nuccore/${id}`,
+                    columns: ['genbank_id', 'genbank', 'accession']
+                },
+                // NCBI Gene ID - numeric only in gene_id columns
+                {
+                    name: 'ncbi_gene',
+                    regex: /^(\d{4,})$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/gene/${id}`,
+                    columns: ['gene_id', 'ncbi_gene_id', 'entrez_id']
+                },
+                // URLs - http/https links
+                {
+                    name: 'url',
+                    regex: /^(https?:\/\/[^\s]+)$/i,
+                    url: (match) => match,
+                    columns: []  // Match in any column
+                }
+            ];
+
+            /**
+             * Transform a cell value into HTML, creating links where appropriate.
+             * @param {string} value - The cell value
+             * @param {string} columnName - The column header name (for context)
+             * @returns {string} HTML string with links if applicable
+             */
+            function transformCellValue(value, columnName) {
+                if (value === null || value === undefined || value === '') {
+                    return '';
+                }
+
+                const strVal = String(value).trim();
+                if (!strVal) return '';
+
+                // Escape HTML first
+                const escaped = strVal
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+
+                const colLower = columnName.toLowerCase();
+
+                // Check each pattern
+                for (const pattern of LINK_PATTERNS) {
+                    // Check if column matches known columns for this pattern
+                    const columnMatch = pattern.columns.length === 0 ||
+                        pattern.columns.some(c => colLower.includes(c));
+
+                    if (!columnMatch && pattern.columns.length > 0) continue;
+
+                    const match = strVal.match(pattern.regex);
+                    if (match) {
+                        const id = match[1] || match[0];
+                        const url = pattern.url(id);
+                        return `<a href="${url}" target="_blank" rel="noopener" class="ts-cell-link" title="${pattern.name.toUpperCase()}: ${id}">${escaped}</a>`;
+                    }
+                }
+
+                return escaped;
+            }
+
+            /**
+             * Check if a value looks like it could be linkified.
+             * Used for tooltip display.
+             */
+            function isLinkableValue(value, columnName) {
+                if (!value) return false;
+                const strVal = String(value).trim();
+                const colLower = columnName.toLowerCase();
+
+                for (const pattern of LINK_PATTERNS) {
+                    const columnMatch = pattern.columns.length === 0 ||
+                        pattern.columns.some(c => colLower.includes(c));
+                    if (columnMatch && pattern.regex.test(strVal)) {
+                        return pattern.name;
+                    }
+                }
+                return null;
+            }
+
+            // =================================================================
             // UI STATE
             // =================================================================
             function showLoading() {
@@ -829,6 +986,11 @@
             // =================================================================
             // API CALLS
             // =================================================================
+
+            /**
+             * Load pangenomes from BERDLTable object.
+             * Handles auto-selection when only one pangenome exists.
+             */
             async function loadPangenomes() {
                 const berdlId = dom.berdlTableId.value.trim();
                 if (!berdlId) { showAlert('Enter BERDLTable ID', 'error'); return; }
@@ -846,14 +1008,23 @@
 
                     const data = await res.json();
                     const pgs = data.pangenomes || [];
+                    const autoSelected = data.auto_selected;
 
+                    // Populate dropdown
                     dom.pangenomeSelect.innerHTML = pgs.length
                         ? pgs.map(p => `<option value="${p.pangenome_id}">${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''}</option>`).join('')
                         : '<option value="">No pangenomes found</option>';
 
                     dom.pangenomeSelect.disabled = pgs.length === 0;
                     dom.refreshBtn.disabled = pgs.length === 0;
-                    setStatus(`Found ${pgs.length} pangenomes`, 'success');
+
+                    // Auto-select if only one pangenome
+                    if (autoSelected) {
+                        dom.pangenomeSelect.value = autoSelected;
+                        setStatus(`Auto-selected: ${autoSelected}`, 'success');
+                    } else {
+                        setStatus(`Found ${pgs.length} pangenomes`, 'success');
+                    }
 
                     if (pgs.length) await loadTables();
 
@@ -1053,12 +1224,14 @@
 
                 dom.tableHead.innerHTML = headerHtml + filterHtml;
 
-                // Body
+                // Body - apply cell value transformations for links
                 dom.tableBody.innerHTML = data.map((row, ri) => {
                     return '<tr>' + headers.map((h, ci) => {
                         const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
-                        const val = row[ci] ?? '';
-                        return `<td class="${hidden}" data-row="${ri}" data-col="${ci}">${val}</td>`;
+                        const rawVal = row[ci] ?? '';
+                        // Transform cell value to add links for known identifiers
+                        const displayVal = transformCellValue(rawVal, h);
+                        return `<td class="${hidden}" data-row="${ri}" data-col="${ci}" data-raw="${String(rawVal).replace(/"/g, '&quot;')}">${displayVal}</td>`;
                     }).join('') + '</tr>';
                 }).join('');
 
@@ -1135,7 +1308,13 @@
             // TOOLTIP
             // =================================================================
             function showTooltip(e, col, value) {
-                dom.tooltipHeader.textContent = col;
+                // Check if this value is linkable
+                const linkType = isLinkableValue(value, col);
+                const header = linkType
+                    ? `${col} [${linkType.toUpperCase()}]`
+                    : col;
+
+                dom.tooltipHeader.textContent = header;
                 dom.tooltipValue.textContent = value || '(empty)';
                 dom.cellTooltip.style.left = (e.clientX + 10) + 'px';
                 dom.cellTooltip.style.top = (e.clientY + 10) + 'px';
@@ -1265,12 +1444,14 @@
                 }
             });
 
-            // Cell tooltip
+            // Cell tooltip - use raw value from data attribute
             document.addEventListener('mouseover', e => {
                 if (e.target.matches('.ts-table td')) {
                     const colIdx = parseInt(e.target.dataset.col);
                     const col = state.allHeaders[colIdx];
-                    showTooltip(e, col, e.target.textContent);
+                    // Use raw value from data attribute (not transformed HTML)
+                    const rawValue = e.target.dataset.raw || e.target.textContent;
+                    showTooltip(e, col, rawValue);
                 }
             });
 

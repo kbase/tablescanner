@@ -439,11 +439,29 @@ async def get_pangenomes(
     kb_env: str = Query("appdev"),
     authorization: Optional[str] = Header(None)
 ):
-    """List pangenomes from BERDLTables object (legacy endpoint)."""
+    """
+    List pangenomes from BERDLTables object.
+    
+    Returns:
+        - pangenomes: List of pangenome info
+        - pangenome_count: Total number of pangenomes
+        - auto_selected: The pangenome_id if only one exists (for auto-selection)
+    """
     try:
         token = get_auth_token(authorization)
         pangenomes = list_pangenomes_from_object(berdl_table_id, token, kb_env)
-        return PangenomesResponse(pangenomes=[PangenomeInfo(**pg) for pg in pangenomes])
+        pangenome_list = [PangenomeInfo(**pg) for pg in pangenomes]
+        
+        # Auto-select if only one pangenome
+        auto_selected = None
+        if len(pangenome_list) == 1:
+            auto_selected = pangenome_list[0].pangenome_id
+        
+        return PangenomesResponse(
+            pangenomes=pangenome_list,
+            pangenome_count=len(pangenome_list),
+            auto_selected=auto_selected
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
