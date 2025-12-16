@@ -19,7 +19,8 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="TableScanner",
         description="API for table scanning operations",
-        version="1.0.0"
+        version="1.0.0",
+        root_path=settings.ROOT_PATH
     )
 
     # Store settings in app state for access throughout the application

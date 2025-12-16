@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # KBase Workspace settings
     WORKSPACE_URL: str
 
+    # Root path for proxy deployment (e.g., "/services/berdl_table_scanner")
+    ROOT_PATH: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
