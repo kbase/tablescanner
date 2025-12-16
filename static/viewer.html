@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TableScanner - BERDL Table Viewer</title>
+    <meta name="description" content="Research-grade viewer for KBase BERDL Table data">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --ts-primary: #6366f1;
+            --ts-primary-hover: #4f46e5;
+            --ts-success: #10b981;
+            --ts-warning: #f59e0b;
+            --ts-danger: #ef4444;
+            --ts-info: #3b82f6;
+            --ts-bg-dark: #0f172a;
+            --ts-bg-card: #1e293b;
+            --ts-bg-input: #334155;
+            --ts-border: #475569;
+            --ts-text: #f1f5f9;
+            --ts-text-muted: #94a3b8;
+            --ts-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+        }
+
+        [data-bs-theme="light"] {
+            --ts-bg-dark: #f8fafc;
+            --ts-bg-card: #ffffff;
+            --ts-bg-input: #f1f5f9;
+            --ts-border: #e2e8f0;
+            --ts-text: #1e293b;
+            --ts-text-muted: #64748b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--ts-bg-dark);
+            color: var(--ts-text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .ts-header {
+            background: var(--ts-gradient);
+            padding: 0.75rem 0;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+        }
+
+        .ts-header h1 {
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .ts-version {
+            font-size: 0.55rem;
+            padding: 0.1rem 0.4rem;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+        }
+
+        .ts-card {
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 10px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .ts-card-header {
+            font-weight: 600;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--ts-text-muted);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .ts-label {
+            display: block;
+            font-size: 0.65rem;
+            font-weight: 500;
+            margin-bottom: 0.2rem;
+            color: var(--ts-text-muted);
+        }
+
+        .ts-input,
+        .ts-select {
+            width: 100%;
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+            border-radius: 6px;
+            padding: 0.35rem 0.5rem;
+            font-size: 0.75rem;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+
+        .ts-input:focus,
+        .ts-select:focus {
+            border-color: var(--ts-primary);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+            outline: none;
+        }
+
+        .ts-input-sm {
+            padding: 0.25rem 0.4rem;
+            font-size: 0.7rem;
+        }
+
+        .ts-btn {
+            background: var(--ts-primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0.35rem 0.7rem;
+            font-weight: 500;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .ts-btn:hover:not(:disabled) {
+            background: var(--ts-primary-hover);
+        }
+
+        .ts-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .ts-btn-outline {
+            background: transparent;
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+        }
+
+        .ts-btn-outline:hover:not(:disabled) {
+            background: var(--ts-bg-input);
+        }
+
+        .ts-btn-sm {
+            padding: 0.2rem 0.4rem;
+            font-size: 0.65rem;
+        }
+
+        .ts-btn-success {
+            background: var(--ts-success);
+        }
+
+        .ts-btn-danger {
+            background: var(--ts-danger);
+        }
+
+        /* Data Table */
+        .ts-table-container {
+            border: 1px solid var(--ts-border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .ts-table-scroll {
+            max-height: 55vh;
+            overflow: auto;
+        }
+
+        .ts-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .ts-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .ts-table th {
+            background: var(--ts-bg-input);
+            color: var(--ts-text);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.4rem;
+            border-bottom: 2px solid var(--ts-border);
+            white-space: nowrap;
+            cursor: pointer;
+            user-select: none;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.65rem;
+        }
+
+        .ts-table th:hover {
+            background: rgba(99, 102, 241, 0.25);
+        }
+
+        .ts-table th.sort-asc::after {
+            content: ' ▲';
+            color: var(--ts-success);
+        }
+
+        .ts-table th.sort-desc::after {
+            content: ' ▼';
+            color: var(--ts-warning);
+        }
+
+        .ts-table th.hidden-col {
+            display: none;
+        }
+
+        .ts-table td {
+            padding: 0.3rem 0.4rem;
+            border-bottom: 1px solid var(--ts-border);
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ts-table td.hidden-col {
+            display: none;
+        }
+
+        .ts-table tbody tr:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .ts-table tbody tr:nth-child(even) {
+            background: rgba(0, 0, 0, 0.03);
+        }
+
+        .ts-filter-row th {
+            padding: 0.2rem;
+            background: var(--ts-bg-card);
+        }
+
+        .ts-col-filter {
+            width: 100%;
+            padding: 0.15rem 0.3rem;
+            font-size: 0.65rem;
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            border-radius: 3px;
+            color: var(--ts-text);
+        }
+
+        /* Status bar */
+        .ts-status-bar {
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            font-size: 0.65rem;
+        }
+
+        .ts-status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .ts-status-value {
+            font-weight: 600;
+            color: var(--ts-primary);
+        }
+
+        .ts-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            font-size: 0.6rem;
+            font-weight: 500;
+        }
+
+        .ts-badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--ts-success);
+        }
+
+        .ts-badge-info {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--ts-info);
+        }
+
+        .ts-badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--ts-warning);
+        }
+
+        /* Pagination */
+        .ts-pagination {
+            display: flex;
+            align-items: center;
+            gap: 0.2rem;
+        }
+
+        .ts-page-btn {
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.65rem;
+            transition: all 0.1s;
+        }
+
+        .ts-page-btn:hover:not(:disabled) {
+            background: var(--ts-primary);
+            border-color: var(--ts-primary);
+        }
+
+        .ts-page-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .ts-page-btn.active {
+            background: var(--ts-primary);
+            border-color: var(--ts-primary);
+        }
+
+        /* Column panel */
+        .ts-panel {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 8px;
+            padding: 0.6rem;
+            min-width: 160px;
+            max-height: 260px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+            display: none;
+        }
+
+        .ts-panel.show {
+            display: block;
+        }
+
+        .ts-col-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.15rem 0;
+            font-size: 0.7rem;
+            cursor: pointer;
+        }
+
+        .ts-col-toggle:hover {
+            color: var(--ts-primary);
+        }
+
+        /* Loading/Empty */
+        .ts-loading,
+        .ts-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            color: var(--ts-text-muted);
+        }
+
+        .ts-spinner {
+            width: 28px;
+            height: 28px;
+            border: 3px solid var(--ts-border);
+            border-top-color: var(--ts-primary);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Alert */
+        .ts-alert {
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .ts-alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--ts-success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .ts-alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--ts-danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .ts-alert-info {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--ts-info);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        /* Tooltip */
+        .ts-tooltip {
+            position: fixed;
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.7rem;
+            max-width: 360px;
+            word-wrap: break-word;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+            display: none;
+        }
+
+        .ts-tooltip.show {
+            display: block;
+        }
+
+        .ts-tooltip-header {
+            font-weight: 600;
+            color: var(--ts-primary);
+            margin-bottom: 0.15rem;
+            font-size: 0.6rem;
+        }
+
+        .ts-tooltip-value {
+            font-family: 'JetBrains Mono', monospace;
+            white-space: pre-wrap;
+        }
+
+        /* API Mode indicator */
+        .ts-api-mode {
+            font-size: 0.55rem;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+
+        .ts-api-local {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--ts-warning);
+        }
+
+        .ts-api-deployed {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--ts-success);
+        }
+    </style>
+</head>
+
+<body>
+    <header class="ts-header">
+        <div class="container-fluid px-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <h1>
+                    <i class="bi bi-table"></i>
+                    TableScanner
+                    <span class="ts-version">v1.1</span>
+                    <span class="ts-api-mode ts-api-local" id="apiModeLabel">Local</span>
+                </h1>
+                <div class="d-flex align-items-center gap-2">
+                    <select class="ts-select ts-input-sm" id="kbEnvSelect" style="width: auto;">
+                        <option value="appdev" selected>AppDev</option>
+                        <option value="ci">CI</option>
+                        <option value="prod">Prod</option>
+                    </select>
+                    <button class="ts-btn ts-btn-outline ts-btn-sm" id="themeToggle" title="Toggle theme">
+                        <i class="bi bi-moon-stars"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container-fluid px-3 pb-3">
+        <!-- Connection -->
+        <div class="ts-card">
+            <div class="ts-card-header"><i class="bi bi-plug"></i> Connection</div>
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="ts-label">BERDLTable ID *</label>
+                    <div class="d-flex gap-1">
+                        <input type="text" class="ts-input" id="berdlTableId" value="76990/ADP1Test"
+                            placeholder="ws/obj">
+                        <button class="ts-btn" id="loadBerdlBtn" title="Load"><i class="bi bi-search"></i></button>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="ts-label">Auth Token *</label>
+                    <input type="password" class="ts-input" id="authToken" placeholder="KBase token">
+                </div>
+                <div class="col-md-4">
+                    <label class="ts-label">API URL</label>
+                    <select class="ts-select" id="apiUrlSelect">
+                        <option value="http://localhost:8000" selected>Local Development</option>
+                        <option value="https://appdev.kbase.us/services/berdl_table_scanner">Deployed (AppDev)</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="ts-label">&#160;</label>
+                    <button class="ts-btn ts-btn-danger ts-btn-sm w-100" id="clearCacheBtn" title="Clear client cache">
+                        <i class="bi bi-trash"></i> Clear Cache
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <!-- Data Selection -->
+        <div class="row g-2">
+            <div class="col-md-7">
+                <div class="ts-card">
+                    <div class="ts-card-header"><i class="bi bi-collection"></i> Data Selection</div>
+                    <div class="row g-2">
+                        <div class="col-4">
+                            <label class="ts-label">Pangenome</label>
+                            <select class="ts-select" id="pangenomeSelect" disabled>
+                                <option value="">Load BERDLTable first</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">Table</label>
+                            <select class="ts-select" id="tableSelect" disabled>
+                                <option value="">Select pangenome</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">&#160;</label>
+                            <div class="d-flex gap-1">
+                                <button class="ts-btn ts-btn-success flex-grow-1" id="loadDataBtn" disabled>
+                                    <i class="bi bi-play-fill"></i> Load All
+                                </button>
+                                <button class="ts-btn ts-btn-outline" id="refreshBtn" disabled title="Re-fetch">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-5">
+                <div class="ts-card">
+                    <div class="ts-card-header"><i class="bi bi-funnel"></i> View Controls</div>
+                    <div class="row g-2">
+                        <div class="col-5">
+                            <label class="ts-label">Search</label>
+                            <input type="text" class="ts-input" id="clientSearch" placeholder="Filter rows...">
+                        </div>
+                        <div class="col-3">
+                            <label class="ts-label">Rows/Page</label>
+                            <select class="ts-select" id="pageSizeSelect">
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100" selected>100</option>
+                                <option value="250">250</option>
+                                <option value="500">500</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">Actions</label>
+                            <div class="d-flex gap-1 position-relative">
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="columnsBtn" title="Columns">
+                                    <i class="bi bi-layout-three-columns"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="filtersBtn" title="Filters">
+                                    <i class="bi bi-filter"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="resetViewBtn" title="Reset">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="exportCsvBtn" disabled title="CSV">
+                                    <i class="bi bi-file-earmark-text"></i>
+                                </button>
+                                <div class="ts-panel" id="columnPanel"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="ts-card">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="ts-card-header mb-0"><i class="bi bi-table"></i> Data</span>
+                    <span class="ts-badge ts-badge-info" id="tableBadge">No data</span>
+                    <span class="ts-badge ts-badge-success" id="cacheBadge" style="display:none;">
+                        <i class="bi bi-hdd"></i> Cached
+                    </span>
+                </div>
+                <div class="small text-muted" id="rowInfo">
+                    <strong id="showStart">0</strong>-<strong id="showEnd">0</strong>
+                    of <strong id="filteredCount">0</strong>
+                    (Total: <strong id="totalCount">0</strong>)
+                </div>
+            </div>
+
+            <div class="ts-loading" id="loadingState" style="display:none;">
+                <div class="ts-spinner"></div>
+                <p class="mt-2 mb-0" style="font-size:0.75rem;">Loading from KBase...</p>
+            </div>
+
+            <div class="ts-empty" id="emptyState">
+                <i class="bi bi-inbox" style="font-size:2rem;opacity:0.4;"></i>
+                <p class="mt-2 mb-0" style="font-size:0.75rem;">Enter BERDLTable ID and click search</p>
+            </div>
+
+            <div class="ts-table-container" id="tableContainer" style="display:none;">
+                <div class="ts-table-scroll" id="tableScroll">
+                    <table class="ts-table" id="dataTable">
+                        <thead id="tableHead"></thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-center mt-2" id="paginationRow" style="display:none;">
+                <div class="ts-pagination" id="pagination"></div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="ts-status-bar">
+            <div class="ts-status-item">
+                <i class="bi bi-circle-fill" id="statusIcon" style="color:var(--ts-text-muted);font-size:0.4rem;"></i>
+                <span id="statusText">Ready</span>
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-clock"></i> <span class="ts-status-value" id="apiTime">--</span>ms
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-hdd"></i> <span class="ts-status-value" id="dataSource">--</span>
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-file-earmark"></i>
+                <span class="ts-status-value" id="dbFile" style="font-family:monospace;font-size:0.6rem;">--</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- Tooltip -->
+    <div class="ts-tooltip" id="cellTooltip">
+        <div class="ts-tooltip-header" id="tooltipHeader"></div>
+        <div class="ts-tooltip-value" id="tooltipValue"></div>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            // =================================================================
+            // STATE - Client-side caching
+            // =================================================================
+            const state = {
+                cache: new Map(),
+                currentKey: null,
+                allHeaders: [],
+                allData: [],
+                visibleColumns: new Set(),
+                sortColumn: null,
+                sortOrder: 'asc',
+                columnFilters: {},
+                clientSearch: '',
+                currentPage: 0,
+                pageSize: 100,
+                filteredData: [],
+                pagedData: []
+            };
+
+            // =================================================================
+            // DOM ELEMENTS
+            // =================================================================
+            const $ = id => document.getElementById(id);
+            const dom = {
+                berdlTableId: $('berdlTableId'),
+                authToken: $('authToken'),
+                apiUrlSelect: $('apiUrlSelect'),
+                apiModeLabel: $('apiModeLabel'),
+                kbEnvSelect: $('kbEnvSelect'),
+                loadBerdlBtn: $('loadBerdlBtn'),
+                pangenomeSelect: $('pangenomeSelect'),
+                tableSelect: $('tableSelect'),
+                loadDataBtn: $('loadDataBtn'),
+                refreshBtn: $('refreshBtn'),
+                clearCacheBtn: $('clearCacheBtn'),
+                clientSearch: $('clientSearch'),
+                pageSizeSelect: $('pageSizeSelect'),
+                columnsBtn: $('columnsBtn'),
+                filtersBtn: $('filtersBtn'),
+                resetViewBtn: $('resetViewBtn'),
+                columnPanel: $('columnPanel'),
+                loadingState: $('loadingState'),
+                emptyState: $('emptyState'),
+                tableContainer: $('tableContainer'),
+                tableHead: $('tableHead'),
+                tableBody: $('tableBody'),
+                paginationRow: $('paginationRow'),
+                pagination: $('pagination'),
+                tableBadge: $('tableBadge'),
+                cacheBadge: $('cacheBadge'),
+                exportCsvBtn: $('exportCsvBtn'),
+                showStart: $('showStart'),
+                showEnd: $('showEnd'),
+                filteredCount: $('filteredCount'),
+                totalCount: $('totalCount'),
+                statusIcon: $('statusIcon'),
+                statusText: $('statusText'),
+                apiTime: $('apiTime'),
+                dataSource: $('dataSource'),
+                dbFile: $('dbFile'),
+                alertArea: $('alertArea'),
+                themeToggle: $('themeToggle'),
+                cellTooltip: $('cellTooltip'),
+                tooltipHeader: $('tooltipHeader'),
+                tooltipValue: $('tooltipValue')
+            };
+
+            // =================================================================
+            // UTILITIES
+            // =================================================================
+            function debounce(fn, ms) {
+                let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+            }
+
+            function getApiUrl() {
+                return dom.apiUrlSelect.value;
+            }
+
+            function updateApiModeLabel() {
+                const isLocal = getApiUrl().includes('localhost');
+                dom.apiModeLabel.textContent = isLocal ? 'Local' : 'Deployed';
+                dom.apiModeLabel.className = 'ts-api-mode ' + (isLocal ? 'ts-api-local' : 'ts-api-deployed');
+            }
+
+            function setStatus(text, type = 'info') {
+                dom.statusText.textContent = text;
+                const colors = {
+                    info: 'var(--ts-text-muted)', success: 'var(--ts-success)',
+                    warning: 'var(--ts-warning)', error: 'var(--ts-danger)', loading: 'var(--ts-primary)'
+                };
+                dom.statusIcon.style.color = colors[type] || colors.info;
+            }
+
+            function showAlert(msg, type = 'info') {
+                dom.alertArea.innerHTML = `<div class="ts-alert ts-alert-${type}"><i class="bi bi-${type === 'error' ? 'exclamation-circle' : type === 'success' ? 'check-circle' : 'info-circle'}"></i>${msg}</div>`;
+                setTimeout(() => dom.alertArea.innerHTML = '', 4000);
+            }
+
+            function getCacheKey() {
+                return `${dom.berdlTableId.value}|${dom.pangenomeSelect.value}|${dom.tableSelect.value}`;
+            }
+
+            function getHeaders() {
+                const h = { 'Content-Type': 'application/json' };
+                if (dom.authToken.value) h['Authorization'] = dom.authToken.value;
+                return h;
+            }
+
+            // =================================================================
+            // UI STATE
+            // =================================================================
+            function showLoading() {
+                dom.loadingState.style.display = 'flex';
+                dom.emptyState.style.display = 'none';
+                dom.tableContainer.style.display = 'none';
+                dom.paginationRow.style.display = 'none';
+                setStatus('Loading...', 'loading');
+            }
+
+            function hideLoading() { dom.loadingState.style.display = 'none'; }
+
+            function showEmpty() {
+                dom.emptyState.style.display = 'flex';
+                dom.tableContainer.style.display = 'none';
+                dom.paginationRow.style.display = 'none';
+            }
+
+            function showTable() {
+                dom.emptyState.style.display = 'none';
+                dom.tableContainer.style.display = 'block';
+                dom.paginationRow.style.display = 'flex';
+            }
+
+            // =================================================================
+            // API CALLS
+            // =================================================================
+            async function loadPangenomes() {
+                const berdlId = dom.berdlTableId.value.trim();
+                if (!berdlId) { showAlert('Enter BERDLTable ID', 'error'); return; }
+                if (!dom.authToken.value) { showAlert('Enter Auth Token', 'error'); return; }
+
+                setStatus('Loading pangenomes...', 'loading');
+
+                try {
+                    const url = new URL(`${getApiUrl()}/pangenomes`);
+                    url.searchParams.set('berdl_table_id', berdlId);
+                    url.searchParams.set('kb_env', dom.kbEnvSelect.value);
+
+                    const res = await fetch(url, { headers: getHeaders() });
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+                    const pgs = data.pangenomes || [];
+
+                    dom.pangenomeSelect.innerHTML = pgs.length
+                        ? pgs.map(p => `<option value="${p.pangenome_id}">${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''}</option>`).join('')
+                        : '<option value="">No pangenomes found</option>';
+
+                    dom.pangenomeSelect.disabled = pgs.length === 0;
+                    dom.refreshBtn.disabled = pgs.length === 0;
+                    setStatus(`Found ${pgs.length} pangenomes`, 'success');
+
+                    if (pgs.length) await loadTables();
+
+                } catch (err) {
+                    setStatus(`Error: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            async function loadTables() {
+                const pgId = dom.pangenomeSelect.value;
+                if (!pgId) return;
+
+                setStatus('Loading tables...', 'loading');
+
+                try {
+                    const url = new URL(`${getApiUrl()}/tables/${pgId}`);
+                    url.searchParams.set('berdl_table_id', dom.berdlTableId.value);
+                    url.searchParams.set('kb_env', dom.kbEnvSelect.value);
+
+                    const res = await fetch(url, { headers: getHeaders() });
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+                    const tables = data.tables || [];
+
+                    dom.tableSelect.innerHTML = tables.length
+                        ? tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count ?? '?'} rows)</option>`).join('')
+                        : '<option value="">No tables</option>';
+
+                    dom.tableSelect.disabled = tables.length === 0;
+                    dom.loadDataBtn.disabled = tables.length === 0;
+                    setStatus(`Found ${tables.length} tables`, 'success');
+
+                } catch (err) {
+                    setStatus(`Error: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            async function loadTableData(forceRefresh = false) {
+                const key = getCacheKey();
+
+                // Check client cache
+                if (!forceRefresh && state.cache.has(key)) {
+                    const cached = state.cache.get(key);
+                    state.currentKey = key;
+                    state.allHeaders = cached.headers;
+                    state.allData = cached.data;
+
+                    if (state.visibleColumns.size === 0) {
+                        state.visibleColumns = new Set(state.allHeaders);
+                    }
+
+                    dom.cacheBadge.style.display = 'inline-flex';
+                    dom.dataSource.textContent = 'Client Cache';
+                    dom.apiTime.textContent = '0';
+                    setStatus('Loaded from client cache', 'success');
+
+                    applyFiltersAndRender();
+                    return;
+                }
+
+                showLoading();
+
+                try {
+                    const body = {
+                        berdl_table_id: dom.berdlTableId.value,
+                        pangenome_id: dom.pangenomeSelect.value,
+                        table_name: dom.tableSelect.value,
+                        limit: 500000,
+                        offset: 0,
+                        kb_env: dom.kbEnvSelect.value
+                    };
+
+                    const res = await fetch(`${getApiUrl()}/table-data`, {
+                        method: 'POST',
+                        headers: getHeaders(),
+                        body: JSON.stringify(body)
+                    });
+
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+
+                    // Store in client cache
+                    state.cache.set(key, { headers: data.headers, data: data.data, meta: data });
+                    state.currentKey = key;
+                    state.allHeaders = data.headers || [];
+                    state.allData = data.data || [];
+
+                    // Reset view state
+                    state.visibleColumns = new Set(state.allHeaders);
+                    state.sortColumn = null;
+                    state.sortOrder = 'asc';
+                    state.columnFilters = {};
+                    state.clientSearch = '';
+                    state.currentPage = 0;
+                    dom.clientSearch.value = '';
+
+                    // Update UI
+                    dom.cacheBadge.style.display = 'none';
+                    dom.apiTime.textContent = data.response_time_ms?.toFixed(0) || '--';
+                    dom.dataSource.textContent = data.source || 'Server';
+                    dom.dbFile.textContent = data.sqlite_file ? data.sqlite_file.split('/').pop() : '--';
+
+                    hideLoading();
+                    setStatus(`Loaded ${state.allData.length} rows`, 'success');
+
+                    applyFiltersAndRender();
+
+                } catch (err) {
+                    hideLoading();
+                    showEmpty();
+                    setStatus(`Error: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            // =================================================================
+            // CLIENT-SIDE FILTERING, SORTING, PAGINATION
+            // =================================================================
+            function applyFiltersAndRender() {
+                let data = [...state.allData];
+                const headers = state.allHeaders;
+
+                // Column filters
+                for (const [col, val] of Object.entries(state.columnFilters)) {
+                    if (!val) continue;
+                    const idx = headers.indexOf(col);
+                    if (idx < 0) continue;
+                    const lowerVal = val.toLowerCase();
+                    data = data.filter(row => String(row[idx] || '').toLowerCase().includes(lowerVal));
+                }
+
+                // Global search
+                if (state.clientSearch) {
+                    const term = state.clientSearch.toLowerCase();
+                    data = data.filter(row => row.some(cell => String(cell || '').toLowerCase().includes(term)));
+                }
+
+                // Sorting
+                if (state.sortColumn) {
+                    const idx = headers.indexOf(state.sortColumn);
+                    if (idx >= 0) {
+                        data.sort((a, b) => {
+                            const aVal = a[idx] ?? '';
+                            const bVal = b[idx] ?? '';
+                            const aNum = parseFloat(aVal);
+                            const bNum = parseFloat(bVal);
+                            if (!isNaN(aNum) && !isNaN(bNum)) {
+                                return state.sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+                            }
+                            const cmp = String(aVal).localeCompare(String(bVal));
+                            return state.sortOrder === 'asc' ? cmp : -cmp;
+                        });
+                    }
+                }
+
+                state.filteredData = data;
+
+                // Paginate
+                const start = state.currentPage * state.pageSize;
+                state.pagedData = data.slice(start, start + state.pageSize);
+
+                renderTable();
+                updatePagination();
+                updateColumnPanel();
+            }
+
+            // =================================================================
+            // RENDERING
+            // =================================================================
+            function renderTable() {
+                const headers = state.allHeaders;
+                const data = state.pagedData;
+
+                if (!headers.length) { showEmpty(); return; }
+                showTable();
+
+                // Header row
+                let headerHtml = '<tr>';
+                headers.forEach(h => {
+                    const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                    const sortCls = state.sortColumn === h ? (state.sortOrder === 'asc' ? ' sort-asc' : ' sort-desc') : '';
+                    headerHtml += `<th class="${hidden}${sortCls}" data-col="${h}">${h}</th>`;
+                });
+                headerHtml += '</tr>';
+
+                // Filter row
+                let filterHtml = '<tr class="ts-filter-row" style="display:none;">';
+                headers.forEach(h => {
+                    const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                    filterHtml += `<th class="${hidden}"><input type="text" class="ts-col-filter" data-filter="${h}" value="${state.columnFilters[h] || ''}" placeholder="..."></th>`;
+                });
+                filterHtml += '</tr>';
+
+                dom.tableHead.innerHTML = headerHtml + filterHtml;
+
+                // Body
+                dom.tableBody.innerHTML = data.map((row, ri) => {
+                    return '<tr>' + headers.map((h, ci) => {
+                        const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                        const val = row[ci] ?? '';
+                        return `<td class="${hidden}" data-row="${ri}" data-col="${ci}">${val}</td>`;
+                    }).join('') + '</tr>';
+                }).join('');
+
+                // Counts
+                dom.tableBadge.textContent = dom.tableSelect.value;
+                dom.totalCount.textContent = state.allData.length;
+                dom.filteredCount.textContent = state.filteredData.length;
+
+                const start = state.currentPage * state.pageSize;
+                dom.showStart.textContent = data.length ? start + 1 : 0;
+                dom.showEnd.textContent = start + data.length;
+
+                dom.exportCsvBtn.disabled = false;
+            }
+
+            function updatePagination() {
+                const totalPages = Math.ceil(state.filteredData.length / state.pageSize);
+                if (totalPages <= 1) {
+                    dom.pagination.innerHTML = '';
+                    return;
+                }
+
+                let html = '';
+                html += `<button class="ts-page-btn" data-page="0" ${state.currentPage === 0 ? 'disabled' : ''}>«</button>`;
+                html += `<button class="ts-page-btn" data-page="${state.currentPage - 1}" ${state.currentPage === 0 ? 'disabled' : ''}>‹</button>`;
+
+                const maxBtns = 7;
+                let start = Math.max(0, state.currentPage - 3);
+                let end = Math.min(totalPages, start + maxBtns);
+                if (end - start < maxBtns) start = Math.max(0, end - maxBtns);
+
+                for (let i = start; i < end; i++) {
+                    html += `<button class="ts-page-btn${i === state.currentPage ? ' active' : ''}" data-page="${i}">${i + 1}</button>`;
+                }
+
+                html += `<button class="ts-page-btn" data-page="${state.currentPage + 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>›</button>`;
+                html += `<button class="ts-page-btn" data-page="${totalPages - 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>»</button>`;
+
+                dom.pagination.innerHTML = html;
+            }
+
+            function updateColumnPanel() {
+                dom.columnPanel.innerHTML = '<div class="ts-card-header mb-1"><i class="bi bi-eye"></i> Columns</div>' +
+                    '<div class="mb-2"><button class="ts-btn ts-btn-sm ts-btn-outline" id="selectAllCols">All</button> <button class="ts-btn ts-btn-sm ts-btn-outline" id="selectNoneCols">None</button></div>' +
+                    state.allHeaders.map(h => `
+                    <label class="ts-col-toggle">
+                        <input type="checkbox" data-toggle-col="${h}" ${state.visibleColumns.has(h) ? 'checked' : ''}>
+                        ${h}
+                    </label>
+                `).join('');
+            }
+
+            // =================================================================
+            // EXPORT
+            // =================================================================
+            function exportCsv() {
+                const visibleHeaders = state.allHeaders.filter(h => state.visibleColumns.has(h));
+                const visibleIndices = visibleHeaders.map(h => state.allHeaders.indexOf(h));
+
+                let csv = visibleHeaders.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
+                state.filteredData.forEach(row => {
+                    csv += visibleIndices.map(i => `"${String(row[i] ?? '').replace(/"/g, '""')}"`).join(',') + '\n';
+                });
+
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${dom.tableSelect.value}_export.csv`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            // =================================================================
+            // TOOLTIP
+            // =================================================================
+            function showTooltip(e, col, value) {
+                dom.tooltipHeader.textContent = col;
+                dom.tooltipValue.textContent = value || '(empty)';
+                dom.cellTooltip.style.left = (e.clientX + 10) + 'px';
+                dom.cellTooltip.style.top = (e.clientY + 10) + 'px';
+                dom.cellTooltip.classList.add('show');
+            }
+
+            function hideTooltip() {
+                dom.cellTooltip.classList.remove('show');
+            }
+
+            // =================================================================
+            // EVENT HANDLERS
+            // =================================================================
+            dom.apiUrlSelect.addEventListener('change', updateApiModeLabel);
+            dom.loadBerdlBtn.addEventListener('click', loadPangenomes);
+            dom.berdlTableId.addEventListener('keypress', e => { if (e.key === 'Enter') loadPangenomes(); });
+            dom.pangenomeSelect.addEventListener('change', loadTables);
+            dom.tableSelect.addEventListener('change', () => dom.loadDataBtn.disabled = !dom.tableSelect.value);
+            dom.loadDataBtn.addEventListener('click', () => loadTableData(false));
+            dom.refreshBtn.addEventListener('click', () => loadTableData(true));
+
+            dom.clearCacheBtn.addEventListener('click', () => {
+                state.cache.clear();
+                showAlert('Client cache cleared', 'success');
+                setStatus('Cache cleared', 'info');
+            });
+
+            dom.clientSearch.addEventListener('input', debounce(() => {
+                state.clientSearch = dom.clientSearch.value;
+                state.currentPage = 0;
+                applyFiltersAndRender();
+            }, 200));
+
+            dom.pageSizeSelect.addEventListener('change', () => {
+                state.pageSize = parseInt(dom.pageSizeSelect.value);
+                state.currentPage = 0;
+                applyFiltersAndRender();
+            });
+
+            dom.columnsBtn.addEventListener('click', () => dom.columnPanel.classList.toggle('show'));
+
+            dom.filtersBtn.addEventListener('click', () => {
+                document.querySelectorAll('.ts-filter-row').forEach(r => {
+                    r.style.display = r.style.display === 'none' ? '' : 'none';
+                });
+            });
+
+            dom.resetViewBtn.addEventListener('click', () => {
+                state.visibleColumns = new Set(state.allHeaders);
+                state.sortColumn = null;
+                state.sortOrder = 'asc';
+                state.columnFilters = {};
+                state.clientSearch = '';
+                state.currentPage = 0;
+                dom.clientSearch.value = '';
+                applyFiltersAndRender();
+            });
+
+            dom.exportCsvBtn.addEventListener('click', exportCsv);
+
+            dom.themeToggle.addEventListener('click', () => {
+                const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+                document.documentElement.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
+                dom.themeToggle.innerHTML = isDark ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
+            });
+
+            document.addEventListener('click', e => {
+                if (!dom.columnPanel.contains(e.target) && !dom.columnsBtn.contains(e.target)) {
+                    dom.columnPanel.classList.remove('show');
+                }
+            });
+
+            // Table header click (sort)
+            document.addEventListener('click', e => {
+                const th = e.target.closest('.ts-table th[data-col]');
+                if (th && !e.target.classList.contains('ts-col-filter')) {
+                    const col = th.dataset.col;
+                    if (state.sortColumn === col) {
+                        state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        state.sortColumn = col;
+                        state.sortOrder = 'asc';
+                    }
+                    state.currentPage = 0;
+                    applyFiltersAndRender();
+                }
+            });
+
+            // Column filter input
+            document.addEventListener('input', debounce(e => {
+                if (e.target.dataset.filter) {
+                    const col = e.target.dataset.filter;
+                    const val = e.target.value.trim();
+                    if (val) state.columnFilters[col] = val;
+                    else delete state.columnFilters[col];
+                    state.currentPage = 0;
+                    applyFiltersAndRender();
+                }
+            }, 200));
+
+            // Pagination
+            document.addEventListener('click', e => {
+                const btn = e.target.closest('.ts-page-btn[data-page]');
+                if (btn && !btn.disabled) {
+                    state.currentPage = parseInt(btn.dataset.page);
+                    applyFiltersAndRender();
+                }
+            });
+
+            // Column toggle
+            document.addEventListener('change', e => {
+                if (e.target.dataset.toggleCol) {
+                    const col = e.target.dataset.toggleCol;
+                    if (e.target.checked) state.visibleColumns.add(col);
+                    else state.visibleColumns.delete(col);
+                    applyFiltersAndRender();
+                }
+            });
+
+            document.addEventListener('click', e => {
+                if (e.target.id === 'selectAllCols') {
+                    state.visibleColumns = new Set(state.allHeaders);
+                    applyFiltersAndRender();
+                } else if (e.target.id === 'selectNoneCols') {
+                    state.visibleColumns.clear();
+                    applyFiltersAndRender();
+                }
+            });
+
+            // Cell tooltip
+            document.addEventListener('mouseover', e => {
+                if (e.target.matches('.ts-table td')) {
+                    const colIdx = parseInt(e.target.dataset.col);
+                    const col = state.allHeaders[colIdx];
+                    showTooltip(e, col, e.target.textContent);
+                }
+            });
+
+            document.addEventListener('mouseout', e => {
+                if (e.target.matches('.ts-table td')) hideTooltip();
+            });
+
+            document.addEventListener('mousemove', e => {
+                if (dom.cellTooltip.classList.contains('show')) {
+                    dom.cellTooltip.style.left = (e.clientX + 10) + 'px';
+                    dom.cellTooltip.style.top = (e.clientY + 10) + 'px';
+                }
+            });
+
+            // Init
+            updateApiModeLabel();
+
+        })();
+    </script>
+</body>
+
+</html>

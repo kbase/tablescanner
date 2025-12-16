@@ -1,18 +1,64 @@
 """
 Configuration settings for TableScanner application.
+
+Loads configuration from environment variables and .env file.
+All KBase service URLs and authentication settings are managed here.
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 
 class Settings(BaseSettings):
-    """Application settings."""
+    """
+    Application settings loaded from environment variables.
+    
+    Create a .env file based on .env.example to configure locally.
+    """
 
-    KB_SERVICE_AUTH_TOKEN: str
-    CACHE_DIR: str
+    # ==========================================================================
+    # AUTHENTICATION
+    # ==========================================================================
+    KB_SERVICE_AUTH_TOKEN: str = Field(
+        ...,
+        description="KBase authentication token for API access"
+    )
 
-    # KBase Workspace settings
-    WORKSPACE_URL: str
+    # ==========================================================================
+    # CACHE SETTINGS
+    # ==========================================================================
+    CACHE_DIR: str = Field(
+        default="/tmp/tablescanner_cache",
+        description="Directory for caching downloaded files and SQLite databases"
+    )
+    CACHE_MAX_AGE_HOURS: int = Field(
+        default=24,
+        description="Maximum age of cached files in hours before re-download"
+    )
+
+    # ==========================================================================
+    # KBASE SERVICE URLS
+    # ==========================================================================
+    WORKSPACE_URL: str = Field(
+        default="https://kbase.us/services/ws",
+        description="KBase Workspace service URL"
+    )
+    KBASE_ENDPOINT: str = Field(
+        default="https://kbase.us/services",
+        description="Base URL for KBase services"
+    )
+    BLOBSTORE_URL: str = Field(
+        default="https://kbase.us/services/shock-api",
+        description="KBase blobstore/shock service URL"
+    )
+
+    # ==========================================================================
+    # APPLICATION SETTINGS
+    # ==========================================================================
+    DEBUG: bool = Field(
+        default=False,
+        description="Enable debug mode with verbose logging"
+    )
 
     class Config:
         env_file = ".env"
@@ -20,5 +66,5 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
-# Global settings instance
+# Global settings instance - loaded at module import
 settings = Settings()
