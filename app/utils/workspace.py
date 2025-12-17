@@ -107,7 +107,11 @@ class KBaseClient:
             Object data dictionary
         """
         if self._use_kbutillib and self._client:
-            return self._client.get_object(ref, ws=ws)
+            try:
+                return self._client.get_object(ref, ws=ws)
+            except Exception as e:
+                logger.warning(f"KBUtilLib get_object failed: {e}. Using fallback.")
+                return self._get_object_fallback(ref, ws)
         else:
             return self._get_object_fallback(ref, ws)
     
@@ -127,12 +131,14 @@ class KBaseClient:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         
         if self._use_kbutillib and self._client:
-            result = self._client.download_blob_file(handle_ref, str(target_path))
-            if result:
-                return Path(result)
-            raise ValueError(f"Failed to download from handle: {handle_ref}")
-        else:
-            return Path(self._download_blob_fallback(handle_ref, str(target_path)))
+            try:
+                result = self._client.download_blob_file(handle_ref, str(target_path))
+                if result:
+                    return Path(result)
+            except Exception as e:
+                logger.warning(f"KBUtilLib download_blob_file failed: {e}. Using fallback.")
+                
+        return Path(self._download_blob_fallback(handle_ref, str(target_path)))
     
     # =========================================================================
     # FALLBACK METHODS (Direct API calls)

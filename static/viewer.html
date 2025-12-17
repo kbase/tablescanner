@@ -518,7 +518,7 @@
                 <h1>
                     <i class="bi bi-table"></i>
                     TableScanner
-                    <span class="ts-version">v1.1</span>
+                    <span class="ts-version">v1.0</span>
                     <span class="ts-api-mode ts-api-local" id="apiModeLabel">Local</span>
                 </h1>
                 <div class="d-flex align-items-center gap-2">
@@ -726,7 +726,9 @@
                 pageSize: 100,
                 filteredData: [],
                 pagedData: [],
-                showFilters: false
+                pagedData: [],
+                showFilters: false,
+                lastTable: null
             };
 
             // =================================================================
@@ -1170,10 +1172,13 @@
                     state.totalRows = data.filtered_count; // Use filtered count for pagination
                     state.serverTotal = data.row_count;
 
-                    // Init visible columns if first load
-                    if (state.visibleColumns.size === 0) {
+                    state.serverTotal = data.row_count;
+
+                    // Reset visible columns if table changed or first load
+                    if (state.lastTable !== body.table_name || state.visibleColumns.size === 0) {
                         state.visibleColumns = new Set(state.allHeaders);
-                        renderHeaders(); // Only render headers on first load or schema change
+                        state.lastTable = body.table_name;
+                        renderHeaders();
                     }
 
                     // Update UI components
@@ -1474,10 +1479,12 @@
                     state.visibleColumns = new Set(state.allHeaders);
                     renderHeaders();
                     renderBody();
+                    updateColumnPanel();
                 } else if (e.target.id === 'selectNoneCols') {
                     state.visibleColumns.clear();
                     renderHeaders();
                     renderBody();
+                    updateColumnPanel();
                 }
             });
 
