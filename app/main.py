@@ -28,8 +28,15 @@ def create_app() -> FastAPI:
     Returns:
         FastAPI: Configured FastAPI application instance
     """
+    # Configure root_path for KBase dynamic services
+    # KBase services are often deployed at /services/service_name
+    # Pydantic Settings management or manual environ check can handle this.
+    import os
+    root_path = os.environ.get("KB_SERVICE_ROOT_PATH", "")
+    
     app = FastAPI(
         title="TableScanner",
+        root_path=root_path,
         description="""
 ## TableScanner API
 

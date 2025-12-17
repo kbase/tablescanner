@@ -522,12 +522,7 @@
                     <span class="ts-api-mode ts-api-local" id="apiModeLabel">Local</span>
                 </h1>
                 <div class="d-flex align-items-center gap-2">
-                    <select class="ts-select ts-input-sm" id="kbEnvSelect" style="width: auto;">
-                        <option value="appdev" selected>AppDev</option>
-                        <option value="ci">CI</option>
-                        <option value="prod">Prod</option>
-                    </select>
-                    <button class="ts-btn ts-btn-outline ts-btn-sm" id="themeToggle" title="Toggle theme">
+                    <button class="ts-btn ts-btn-sm" id="themeToggle" title="Toggle Theme">
                         <i class="bi bi-moon-stars"></i>
                     </button>
                 </div>
@@ -730,7 +725,8 @@
                 currentPage: 0,
                 pageSize: 100,
                 filteredData: [],
-                pagedData: []
+                pagedData: [],
+                showFilters: false
             };
 
             // =================================================================
@@ -742,7 +738,7 @@
                 authToken: $('authToken'),
                 apiUrlSelect: $('apiUrlSelect'),
                 apiModeLabel: $('apiModeLabel'),
-                kbEnvSelect: $('kbEnvSelect'),
+                // kbEnvSelect removed
                 loadBerdlBtn: $('loadBerdlBtn'),
                 pangenomeSelect: $('pangenomeSelect'),
                 tableSelect: $('tableSelect'),
@@ -808,12 +804,15 @@
             }
 
             function showAlert(msg, type = 'info') {
-                dom.alertArea.innerHTML = `<div class="ts-alert ts-alert-${type}"><i class="bi bi-${type === 'error' ? 'exclamation-circle' : type === 'success' ? 'check-circle' : 'info-circle'}"></i>${msg}</div>`;
+                dom.alertArea.innerHTML = `<div class="ts-alert ts-alert-${type}" title="${msg.replace(/"/g, '&quot;')}"><i class="bi bi-${type === 'error' ? 'exclamation-circle' : type === 'success' ? 'check-circle' : 'info-circle'}"></i>${msg}</div>`;
                 setTimeout(() => dom.alertArea.innerHTML = '', 4000);
             }
 
             function getCacheKey() {
-                return `${dom.berdlTableId.value}|${dom.pangenomeSelect.value}|${dom.tableSelect.value}`;
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                const pangenomeId = selectedOption ? selectedOption.value : '';
+                const berdlId = selectedOption ? selectedOption.dataset.berdl : '';
+                return `${berdlId}|${pangenomeId}|${dom.tableSelect.value}`;
             }
 
             function getHeaders() {
@@ -992,16 +991,21 @@
              * Handles auto-selection when only one pangenome exists.
              */
             async function loadPangenomes() {
-                const berdlId = dom.berdlTableId.value.trim();
-                if (!berdlId) { showAlert('Enter BERDLTable ID', 'error'); return; }
+                const berdlIdInput = dom.berdlTableId.value.trim();
+
+                // Allow multiple IDs (split by comma, clean whitespace)
+                // Filter out empty strings
+                const berdlIds = berdlIdInput.split(',').map(s => s.trim()).filter(Boolean);
+
+                if (berdlIds.length === 0) { showAlert('Enter BERDLTable ID(s)', 'error'); return; }
                 if (!dom.authToken.value) { showAlert('Enter Auth Token', 'error'); return; }
 
                 setStatus('Loading pangenomes...', 'loading');
 
                 try {
                     const url = new URL(`${getApiUrl()}/pangenomes`);
-                    url.searchParams.set('berdl_table_id', berdlId);
-                    url.searchParams.set('kb_env', dom.kbEnvSelect.value);
+                    // Join back with commas for the API call
+                    url.searchParams.set('berdl_table_id', berdlIds.join(','));
 
                     const res = await fetch(url, { headers: getHeaders() });
                     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -1010,20 +1014,31 @@
                     const pgs = data.pangenomes || [];
                     const autoSelected = data.auto_selected;
 
-                    // Populate dropdown
+                    // Populate dropdown with group context if multiple IDs used
+                    // Format: "PangenomeID - SourceID"
+                    // VALUE: source_berdl_id (as pangenome_id is now inferred)
                     dom.pangenomeSelect.innerHTML = pgs.length
-                        ? pgs.map(p => `<option value="${p.pangenome_id}">${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''}</option>`).join('')
+                        ? pgs.map(p => {
+                            const label = `${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''} [${p.source_berdl_id}]`;
+                            return `<option value="${p.pangenome_id}" data-berdl="${p.source_berdl_id}">${label}</option>`;
+                        }).join('')
                         : '<option value="">No pangenomes found</option>';
 
                     dom.pangenomeSelect.disabled = pgs.length === 0;
                     dom.refreshBtn.disabled = pgs.length === 0;
 
-                    // Auto-select if only one pangenome
+                    // Auto-select if ONLY one pangenome
+                    // Since value is now source_berdl_id, we need to find it from the data
                     if (autoSelected) {
-                        dom.pangenomeSelect.value = autoSelected;
-                        setStatus(`Auto-selected: ${autoSelected}`, 'success');
+                        // Find the corresponding source_berdl_id for the autoSelected pangenome_id
+                        const target = pgs.find(p => p.pangenome_id === autoSelected);
+                        if (target) {
+                            dom.pangenomeSelect.value = target.pangenome_id;
+                            setStatus(`Auto-selected: ${autoSelected}`, 'success');
+                        }
                     } else {
-                        setStatus(`Found ${pgs.length} pangenomes`, 'success');
+                        // If multiple IDs, just show count
+                        setStatus(`Found ${pgs.length} pangenomes from ${berdlIds.length} source(s)`, 'success');
                     }
 
                     if (pgs.length) await loadTables();
@@ -1035,34 +1050,47 @@
             }
 
             async function loadTables() {
-                const pgId = dom.pangenomeSelect.value;
-                if (!pgId) return;
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                if (!selectedOption) return;
+
+                const berdlId = selectedOption.dataset.berdl;
+                if (!berdlId) return;
 
                 setStatus('Loading tables...', 'loading');
 
                 try {
-                    const url = new URL(`${getApiUrl()}/tables/${pgId}`);
-                    url.searchParams.set('berdl_table_id', dom.berdlTableId.value);
-                    url.searchParams.set('kb_env', dom.kbEnvSelect.value);
+                    const url = new URL(`${getApiUrl()}/tables`);
+                    url.searchParams.set('berdl_table_id', berdlId);
 
                     const res = await fetch(url, { headers: getHeaders() });
                     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 
                     const data = await res.json();
-                    const tables = data.tables || [];
 
-                    dom.tableSelect.innerHTML = tables.length
-                        ? tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count ?? '?'} rows)</option>`).join('')
-                        : '<option value="">No tables</option>';
+                    // Populate table select
+                    dom.tableSelect.innerHTML = data.tables.length
+                        ? data.tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count} rows)</option>`).join('')
+                        : '<option value="">No tables found</option>';
 
-                    dom.tableSelect.disabled = tables.length === 0;
-                    dom.loadDataBtn.disabled = tables.length === 0;
-                    setStatus(`Found ${tables.length} tables`, 'success');
+                    dom.tableSelect.disabled = data.tables.length === 0;
+
+                    // Auto-load first table if no specific selection
+                    if (data.tables.length) {
+                        dom.tableSelect.selectedIndex = 0;
+                        await loadTableData();
+                    } else {
+                        showEmpty();
+                    }
+                    setStatus(`Loaded ${data.tables.length} tables`, 'success');
 
                 } catch (err) {
                     setStatus(`Error: ${err.message}`, 'error');
                     showAlert(err.message, 'error');
                 }
+            }
+
+            function refreshData() {
+                loadTableData();
             }
 
             async function loadTableData(forceRefresh = false) {
@@ -1088,18 +1116,46 @@
                     return;
                 }
 
+                // =================================================================
+                // STATE MANAGEMENT & SERVER-SIDE DATA FETCHING
+                // =================================================================
+
+                // Trigger a data refresh based on current state
+
+                if (!dom.tableSelect.value) return;
+
+                // If loading from distinct cache key (pangenome+table), reset view only if needed
+                // But generally we just fetch with current state
+
                 showLoading();
 
-                try {
-                    const body = {
-                        berdl_table_id: dom.berdlTableId.value,
-                        pangenome_id: dom.pangenomeSelect.value,
-                        table_name: dom.tableSelect.value,
-                        limit: 500000,
-                        offset: 0,
-                        kb_env: dom.kbEnvSelect.value
-                    };
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                const berdlId = selectedOption.dataset.berdl;
+                const pangenomeId = selectedOption.value;
 
+                // Construct request based on STATE
+                const body = {
+                    berdl_table_id: berdlId,
+                    pangenome_id: pangenomeId,
+                    table_name: dom.tableSelect.value,
+                    limit: state.pageSize,
+                    offset: state.currentPage * state.pageSize,
+                    columns: 'all',
+                    col_filter: state.columnFilters,
+                    search_value: state.clientSearch,
+                    sort_column: state.sortColumn,
+                    sort_order: state.sortOrder ? state.sortOrder.toUpperCase() : 'ASC'
+                };
+
+                // Add order_by if sorting is active (backend expects list for strictly complex sorts, but simple fields work too)
+                if (state.sortColumn) {
+                    body.order_by = [{
+                        column: state.sortColumn,
+                        direction: state.sortOrder ? state.sortOrder.toUpperCase() : 'ASC'
+                    }];
+                }
+
+                try {
                     const res = await fetch(`${getApiUrl()}/table-data`, {
                         method: 'POST',
                         headers: getHeaders(),
@@ -1109,152 +1165,124 @@
                     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 
                     const data = await res.json();
-
-                    // Store in client cache
-                    state.cache.set(key, { headers: data.headers, data: data.data, meta: data });
-                    state.currentKey = key;
+                    state.allData = data.data || []; // Current page data
                     state.allHeaders = data.headers || [];
-                    state.allData = data.data || [];
+                    state.totalRows = data.filtered_count; // Use filtered count for pagination
+                    state.serverTotal = data.row_count;
 
-                    // Reset view state
-                    state.visibleColumns = new Set(state.allHeaders);
-                    state.sortColumn = null;
-                    state.sortOrder = 'asc';
-                    state.columnFilters = {};
-                    state.clientSearch = '';
-                    state.currentPage = 0;
-                    dom.clientSearch.value = '';
+                    // Init visible columns if first load
+                    if (state.visibleColumns.size === 0) {
+                        state.visibleColumns = new Set(state.allHeaders);
+                        renderHeaders(); // Only render headers on first load or schema change
+                    }
 
-                    // Update UI
+                    // Update UI components
                     dom.cacheBadge.style.display = 'none';
                     dom.apiTime.textContent = data.response_time_ms?.toFixed(0) || '--';
                     dom.dataSource.textContent = data.source || 'Server';
                     dom.dbFile.textContent = data.sqlite_file ? data.sqlite_file.split('/').pop() : '--';
 
                     hideLoading();
-                    setStatus(`Loaded ${state.allData.length} rows`, 'success');
 
-                    applyFiltersAndRender();
+                    // Render ONLY body and updates
+                    renderBody();
+                    updatePagination();
+                    updateHeaderIcons(); // Update sort icons without destroying inputs
+                    updateColumnPanel();
+                    updateCounts();
 
                 } catch (err) {
                     hideLoading();
                     showEmpty();
                     setStatus(`Error: ${err.message}`, 'error');
-                    showAlert(err.message, 'error');
+                    console.error(err);
                 }
-            }
-
-            // =================================================================
-            // CLIENT-SIDE FILTERING, SORTING, PAGINATION
-            // =================================================================
-            function applyFiltersAndRender() {
-                let data = [...state.allData];
-                const headers = state.allHeaders;
-
-                // Column filters
-                for (const [col, val] of Object.entries(state.columnFilters)) {
-                    if (!val) continue;
-                    const idx = headers.indexOf(col);
-                    if (idx < 0) continue;
-                    const lowerVal = val.toLowerCase();
-                    data = data.filter(row => String(row[idx] || '').toLowerCase().includes(lowerVal));
-                }
-
-                // Global search
-                if (state.clientSearch) {
-                    const term = state.clientSearch.toLowerCase();
-                    data = data.filter(row => row.some(cell => String(cell || '').toLowerCase().includes(term)));
-                }
-
-                // Sorting
-                if (state.sortColumn) {
-                    const idx = headers.indexOf(state.sortColumn);
-                    if (idx >= 0) {
-                        data.sort((a, b) => {
-                            const aVal = a[idx] ?? '';
-                            const bVal = b[idx] ?? '';
-                            const aNum = parseFloat(aVal);
-                            const bNum = parseFloat(bVal);
-                            if (!isNaN(aNum) && !isNaN(bNum)) {
-                                return state.sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
-                            }
-                            const cmp = String(aVal).localeCompare(String(bVal));
-                            return state.sortOrder === 'asc' ? cmp : -cmp;
-                        });
-                    }
-                }
-
-                state.filteredData = data;
-
-                // Paginate
-                const start = state.currentPage * state.pageSize;
-                state.pagedData = data.slice(start, start + state.pageSize);
-
-                renderTable();
-                updatePagination();
-                updateColumnPanel();
             }
 
             // =================================================================
             // RENDERING
             // =================================================================
-            function renderTable() {
-                const headers = state.allHeaders;
-                const data = state.pagedData;
 
-                if (!headers.length) { showEmpty(); return; }
-                showTable();
+            function renderHeaders() {
+                const headers = state.allHeaders;
 
                 // Header row
                 let headerHtml = '<tr>';
                 headers.forEach(h => {
                     const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
-                    const sortCls = state.sortColumn === h ? (state.sortOrder === 'asc' ? ' sort-asc' : ' sort-desc') : '';
-                    headerHtml += `<th class="${hidden}${sortCls}" data-col="${h}">${h}</th>`;
+                    headerHtml += `<th class="${hidden}" data-col="${h}">${h}</th>`;
                 });
                 headerHtml += '</tr>';
 
-                // Filter row
-                let filterHtml = '<tr class="ts-filter-row" style="display:none;">';
+                // Filter row (Persist values if re-rendering)
+                // Note: We use state.columnFilters to populate, but usually we just toggle visibility
+                let filterHtml = '<tr class="ts-filter-row" style="display:' + (state.showFilters ? '' : 'none') + ';">';
                 headers.forEach(h => {
                     const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
-                    filterHtml += `<th class="${hidden}"><input type="text" class="ts-col-filter" data-filter="${h}" value="${state.columnFilters[h] || ''}" placeholder="..."></th>`;
+                    const val = state.columnFilters[h] || '';
+                    filterHtml += `<th class="${hidden}"><input type="text" class="ts-col-filter" data-filter="${h}" value="${val}" placeholder="..."></th>`;
                 });
                 filterHtml += '</tr>';
 
                 dom.tableHead.innerHTML = headerHtml + filterHtml;
+            }
 
-                // Body - apply cell value transformations for links
+            function renderBody() {
+                const headers = state.allHeaders;
+                const data = state.allData; // This is now just the current page
+
+                if (!headers.length) { showEmpty(); return; }
+                showTable();
+
                 dom.tableBody.innerHTML = data.map((row, ri) => {
                     return '<tr>' + headers.map((h, ci) => {
                         const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
                         const rawVal = row[ci] ?? '';
-                        // Transform cell value to add links for known identifiers
                         const displayVal = transformCellValue(rawVal, h);
                         return `<td class="${hidden}" data-row="${ri}" data-col="${ci}" data-raw="${String(rawVal).replace(/"/g, '&quot;')}">${displayVal}</td>`;
                     }).join('') + '</tr>';
                 }).join('');
+            }
 
-                // Counts
+            function updateHeaderIcons() {
+                // update sort classes
+                document.querySelectorAll('.ts-table thead th[data-col]').forEach(th => {
+                    th.classList.remove('sort-asc', 'sort-desc');
+                    if (th.dataset.col === state.sortColumn) {
+                        th.classList.add(state.sortOrder === 'asc' ? 'sort-asc' : 'sort-desc');
+                    }
+                });
+
+                // update visibility classes
+                const headers = state.allHeaders;
+                const visibleHeaders = headers.filter(h => state.visibleColumns.has(h));
+
+                // We'd need to complex match indices to update hidden classes dynamically
+                // For now, if visibility changes, we might need full re-render, 
+                // but for sorting/filtering we rely on updateHeaderIcons.
+            }
+
+            function updateCounts() {
                 dom.tableBadge.textContent = dom.tableSelect.value;
-                dom.totalCount.textContent = state.allData.length;
-                dom.filteredCount.textContent = state.filteredData.length;
+                dom.totalCount.textContent = state.serverTotal || 0;
+                dom.filteredCount.textContent = state.totalRows || 0;
 
                 const start = state.currentPage * state.pageSize;
-                dom.showStart.textContent = data.length ? start + 1 : 0;
-                dom.showEnd.textContent = start + data.length;
-
-                dom.exportCsvBtn.disabled = false;
+                const count = state.allData.length;
+                dom.showStart.textContent = count ? start + 1 : 0;
+                dom.showEnd.textContent = start + count;
             }
 
             function updatePagination() {
-                const totalPages = Math.ceil(state.filteredData.length / state.pageSize);
+                const totalPages = Math.ceil((state.totalRows || 0) / state.pageSize);
+
                 if (totalPages <= 1) {
                     dom.pagination.innerHTML = '';
                     return;
                 }
 
                 let html = '';
+                // First/Prev
                 html += `<button class="ts-page-btn" data-page="0" ${state.currentPage === 0 ? 'disabled' : ''}>«</button>`;
                 html += `<button class="ts-page-btn" data-page="${state.currentPage - 1}" ${state.currentPage === 0 ? 'disabled' : ''}>‹</button>`;
 
@@ -1267,6 +1295,7 @@
                     html += `<button class="ts-page-btn${i === state.currentPage ? ' active' : ''}" data-page="${i}">${i + 1}</button>`;
                 }
 
+                // Next/Last
                 html += `<button class="ts-page-btn" data-page="${state.currentPage + 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>›</button>`;
                 html += `<button class="ts-page-btn" data-page="${totalPages - 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>»</button>`;
 
@@ -1292,14 +1321,14 @@
                 const visibleIndices = visibleHeaders.map(h => state.allHeaders.indexOf(h));
 
                 let csv = visibleHeaders.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
-                state.filteredData.forEach(row => {
+                state.allData.forEach(row => {
                     csv += visibleIndices.map(i => `"${String(row[i] ?? '').replace(/"/g, '""')}"`).join(',') + '\n';
                 });
 
                 const blob = new Blob([csv], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url; a.download = `${dom.tableSelect.value}_export.csv`;
+                a.href = url; a.download = `${dom.tableSelect.value}_page_${state.currentPage + 1}.csv`;
                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             }
@@ -1345,20 +1374,23 @@
             dom.clientSearch.addEventListener('input', debounce(() => {
                 state.clientSearch = dom.clientSearch.value;
                 state.currentPage = 0;
-                applyFiltersAndRender();
-            }, 200));
+                refreshData();
+            }, 500));
 
             dom.pageSizeSelect.addEventListener('change', () => {
                 state.pageSize = parseInt(dom.pageSizeSelect.value);
                 state.currentPage = 0;
-                applyFiltersAndRender();
+                refreshData();
             });
 
             dom.columnsBtn.addEventListener('click', () => dom.columnPanel.classList.toggle('show'));
 
             dom.filtersBtn.addEventListener('click', () => {
+                // Toggle state
+                state.showFilters = !state.showFilters;
+                // Update UI visibility
                 document.querySelectorAll('.ts-filter-row').forEach(r => {
-                    r.style.display = r.style.display === 'none' ? '' : 'none';
+                    r.style.display = state.showFilters ? '' : 'none';
                 });
             });
 
@@ -1370,7 +1402,9 @@
                 state.clientSearch = '';
                 state.currentPage = 0;
                 dom.clientSearch.value = '';
-                applyFiltersAndRender();
+                // Render headers to clear filter inputs physically
+                renderHeaders();
+                refreshData();
             });
 
             dom.exportCsvBtn.addEventListener('click', exportCsv);
@@ -1399,11 +1433,11 @@
                         state.sortOrder = 'asc';
                     }
                     state.currentPage = 0;
-                    applyFiltersAndRender();
+                    refreshData();
                 }
             });
 
-            // Column filter input
+            // Column filter input (Debounced Server Call)
             document.addEventListener('input', debounce(e => {
                 if (e.target.dataset.filter) {
                     const col = e.target.dataset.filter;
@@ -1411,16 +1445,16 @@
                     if (val) state.columnFilters[col] = val;
                     else delete state.columnFilters[col];
                     state.currentPage = 0;
-                    applyFiltersAndRender();
+                    refreshData();
                 }
-            }, 200));
+            }, 500));
 
             // Pagination
             document.addEventListener('click', e => {
                 const btn = e.target.closest('.ts-page-btn[data-page]');
                 if (btn && !btn.disabled) {
                     state.currentPage = parseInt(btn.dataset.page);
-                    applyFiltersAndRender();
+                    refreshData();
                 }
             });
 
@@ -1430,26 +1464,28 @@
                     const col = e.target.dataset.toggleCol;
                     if (e.target.checked) state.visibleColumns.add(col);
                     else state.visibleColumns.delete(col);
-                    applyFiltersAndRender();
+                    renderHeaders();
+                    renderBody();
                 }
             });
 
             document.addEventListener('click', e => {
                 if (e.target.id === 'selectAllCols') {
                     state.visibleColumns = new Set(state.allHeaders);
-                    applyFiltersAndRender();
+                    renderHeaders();
+                    renderBody();
                 } else if (e.target.id === 'selectNoneCols') {
                     state.visibleColumns.clear();
-                    applyFiltersAndRender();
+                    renderHeaders();
+                    renderBody();
                 }
             });
 
-            // Cell tooltip - use raw value from data attribute
+            // Cell tooltip 
             document.addEventListener('mouseover', e => {
                 if (e.target.matches('.ts-table td')) {
                     const colIdx = parseInt(e.target.dataset.col);
                     const col = state.allHeaders[colIdx];
-                    // Use raw value from data attribute (not transformed HTML)
                     const rawValue = e.target.dataset.raw || e.target.textContent;
                     showTooltip(e, col, rawValue);
                 }

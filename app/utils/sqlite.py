@@ -197,18 +197,18 @@ def query_sqlite(sqlite_file: Path, query_id: str) -> dict:
 def get_table_data(
     sqlite_file: Path,
     table_name: str,
-    limit: Optional[int] = None,
-    offset: Optional[int] = None,
-    order_by: Optional[List[Dict[str, str]]] = None,
-    filters: Optional[List[Dict[str, Any]]] = None,
+    limit: int = 100,
+    offset: int = 0,
     sort_column: Optional[str] = None,
-    sort_order: Optional[str] = None,
+    sort_order: str = "ASC",
     search_value: Optional[str] = None,
     query_filters: Optional[Dict[str, str]] = None,
-) -> Tuple[List[str], List[List[str]], int, int, float, float]:
+    columns: Optional[str] = "all",
+    order_by: Optional[List[Dict[str, str]]] = None
+) -> Tuple[List[str], List[Any], int, int, float, float]:
     """
-    Extract table data with pagination, sorting, and filtering.
-
+    Get paginated and filtered data from a table.
+    
     Supports two filtering APIs for flexibility:
     1. `filters`: List of FilterSpec-style dicts with column, op, value
     2. `query_filters`: Simple dict of column -> search_value (LIKE matching)
@@ -218,12 +218,12 @@ def get_table_data(
         table_name: Name of the table to query
         limit: Maximum number of rows to return
         offset: Number of rows to skip
-        order_by: List of order specifications [{column, direction}]
-        filters: List of filter specifications [{column, op, value}]
         sort_column: Single column to sort by (alternative to order_by)
         sort_order: Sort direction 'asc' or 'desc' (with sort_column)
         search_value: Global search term for all columns
         query_filters: Dict of column-specific search terms
+        columns: Comma-separated list of columns to select
+        order_by: List of order specifications [{column, direction}]
 
     Returns:
         Tuple of (headers, data, total_count, filtered_count, db_query_ms, conversion_ms)
@@ -232,17 +232,36 @@ def get_table_data(
         sqlite3.Error: If database query fails
         ValueError: If invalid operator is specified
     """
+    start_time = time.time()
+    
+    # Initialize legacy filters to None since removed from signature
+    filters = None
+    
     try:
         conn = sqlite3.connect(str(sqlite_file))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Get column names first
-        headers = get_table_columns(sqlite_file, table_name)
+        # Get all column names first for validation
+        all_headers = get_table_columns(sqlite_file, table_name)
 
-        if not headers:
+        if not all_headers:
             logger.warning(f"Table {table_name} has no columns or doesn't exist")
             return [], [], 0, 0, 0.0, 0.0
+
+        # Parse requested columns
+        selected_headers = all_headers
+        select_clause = "*"
+        
+        if columns and columns.lower() != "all":
+            requested = [c.strip() for c in columns.split(',') if c.strip()]
+            valid = [c for c in requested if c in all_headers]
+            if valid:
+                selected_headers = valid
+                safe_cols = [f'"{c}"' for c in selected_headers]
+                select_clause = ", ".join(safe_cols)
+        
+        headers = selected_headers
 
         # 1. Get total count (before filtering)
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -299,7 +318,7 @@ def get_table_data(
             filtered_count = total_count
 
         # 4. Build final query
-        query = f"SELECT * FROM {table_name}{where_clause}"
+        query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
 
         # Add ORDER BY clause
         order_clauses = []

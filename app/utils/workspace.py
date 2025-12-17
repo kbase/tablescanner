@@ -317,6 +317,7 @@ def list_pangenomes_from_object(
             "pangenome_taxonomy": pg.get("pangenome_taxonomy", ""),
             "user_genomes": pg.get("user_genomes", []),
             "berdl_genomes": pg.get("berdl_genomes", []),
+            "genome_count": len(pg.get("user_genomes", [])) + len(pg.get("berdl_genomes", [])),
             "handle_ref": pg.get("sqllite_tables_handle_ref", ""),
         })
     
@@ -356,42 +357,63 @@ def find_pangenome_handle(
 
 def download_pangenome_db(
     berdl_table_id: str,
-    pangenome_id: str,
+    pangenome_id: Optional[str],
     auth_token: str,
     cache_dir: Path,
     kb_env: str = "appdev"
 ) -> Path:
     """
-    Download the SQLite database for a pangenome by ID.
+    Download the SQLite database for a pangenome.
+    If pangenome_id is None, it is auto-resolved from the BERDL object (1:1 mapping assumed).
 
     Checks cache first, downloads only if not present.
-
-    Args:
-        berdl_table_id: KBase workspace reference
-        pangenome_id: Pangenome ID
-        auth_token: KBase authentication token
-        cache_dir: Local cache directory
-        kb_env: KBase environment
-
-    Returns:
-        Path to the local SQLite database file
     """
     from app.utils.cache import is_cached, get_cache_paths
     
-    # Get cache path
     cache_dir = Path(cache_dir)
     safe_id = berdl_table_id.replace("/", "_").replace(":", "_")
     db_dir = cache_dir / safe_id
-    db_path = db_dir / f"{pangenome_id}.db"
     
-    # Check cache
+    # 1. Resolve ID and Handle if not provided
+    target_id = pangenome_id
+    handle_ref = None
+    
+    # We always need the ID for the filename.
+    # If pangenome_id is missing, we must fetch the object metadata to get it.
+    # If pangenome_id IS provided, we might still need to fetch object to get the handle (unless cached).
+    
+    # Optimization: If pangenome_id is provided, check if file exists. 
+    # If so, we don't need to fetch metadata.
+    if target_id:
+        db_path = db_dir / f"{target_id}.db"
+        if db_path.exists():
+            logger.info(f"Using cached database: {db_path}")
+            return db_path
+
+    # If not cached or ID unknown, we must fetch metadata
+    pangenomes = list_pangenomes_from_object(berdl_table_id, auth_token, kb_env)
+    if not pangenomes:
+        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+        
+    if target_id:
+        # Verify and find handle
+        found = next((p for p in pangenomes if p["pangenome_id"] == target_id), None)
+        if not found:
+            raise ValueError(f"Pangenome '{target_id}' not found in {berdl_table_id}")
+        handle_ref = found["handle_ref"]
+    else:
+        # Auto-resolve: take the first one
+        found = pangenomes[0]
+        target_id = found["pangenome_id"]
+        handle_ref = found["handle_ref"]
+        
+    # Re-check cache with resolved ID
+    db_path = db_dir / f"{target_id}.db"
     if db_path.exists():
-        logger.info(f"Using cached database: {db_path}")
+        logger.info(f"Using cached database: {db_path} (resolved ID: {target_id})")
         return db_path
     
-    # Find handle and download
-    handle_ref = find_pangenome_handle(berdl_table_id, pangenome_id, auth_token, kb_env)
-    
+    # Download
     client = KBaseClient(auth_token, kb_env, cache_dir)
     db_path = client.download_blob_file(handle_ref, db_path)
     

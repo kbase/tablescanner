@@ -95,10 +95,15 @@ class TableDataRequest(BaseModel):
         description="BERDLTables object reference",
         examples=["76990/ADPITest"]
     )
-    pangenome_id: str = Field(
-        ...,
-        description="Pangenome ID to query",
-        examples=["pg_default"]
+    columns: Optional[str] = Field(
+        "all",
+        description="Comma-separated list of columns to select or 'all'",
+        examples=["gene_id, gene_name"]
+    )
+    col_filter: Optional[Dict[str, str]] = Field(
+        None,
+        description="Column-specific filters (alias for query_filters)",
+        examples=[{"gene_name": "kinase"}]
     )
     table_name: str = Field(
         ...,
@@ -124,6 +129,11 @@ class TableDataRequest(BaseModel):
         "ASC",
         description="Sort direction"
     )
+    order_by: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description="Multi-column sort specifications [{'column': 'col_name', 'direction': 'asc'}]",
+        examples=[[{"column": "gene_name", "direction": "asc"}, {"column": "score", "direction": "desc"}]]
+    )
     search_value: Optional[str] = Field(
         None,
         description="Global search term"
@@ -132,6 +142,11 @@ class TableDataRequest(BaseModel):
         None,
         description="Column-specific filters {column_name: filter_value}",
         examples=[{"gene_name": "kinase", "organism": "E. coli"}]
+    )
+    pangenome_id: Optional[str] = Field(
+        None,
+        description="Specific pangenome ID (optimizes cache lookup)",
+        examples=["pg_123"]
     )
     kb_env: str = Field(
         "appdev",
@@ -166,9 +181,11 @@ class TableListResponse(BaseModel):
 
 
 class PangenomeInfo(BaseModel):
-    """Information about a pangenome within a BERDLTables object."""
-    pangenome_id: Optional[str] = Field(None, description="Unique pangenome identifier")
-    pangenome_taxonomy: Optional[str] = Field(None, description="Taxonomic classification")
+    """Information about a pangenome found in the SQLite file."""
+    pangenome_id: str = Field(..., description="ID of the pangenome")
+    pangenome_taxonomy: Optional[str] = Field(None, description="Taxonomy of the pangenome")
+    genome_count: int = Field(..., description="Number of genomes in the pangenome")
+    source_berdl_id: str = Field(..., description="Source BERDL Table ID")
     user_genomes: List[str] = Field(
         default_factory=list,
         description="List of user-provided genome references"

@@ -449,10 +449,27 @@ async def get_pangenomes(
     """
     try:
         token = get_auth_token(authorization)
-        pangenomes = list_pangenomes_from_object(berdl_table_id, token, kb_env)
-        pangenome_list = [PangenomeInfo(**pg) for pg in pangenomes]
         
-        # Auto-select if only one pangenome
+        # Support comma-separated list of IDs
+        berdl_ids = [bid.strip() for bid in berdl_table_id.split(",") if bid.strip()]
+        
+        all_pangenomes: list[dict] = []
+        
+        for bid in berdl_ids:
+            try:
+                pangenomes = list_pangenomes_from_object(bid, token, kb_env)
+                # Tag each pangenome with its source ID
+                for pg in pangenomes:
+                    pg["source_berdl_id"] = bid
+                all_pangenomes.extend(pangenomes)
+            except Exception as e:
+                logger.error(f"Error fetching pangenomes for {bid}: {e}")
+                # Continue fetching others even if one fails
+                continue
+                
+        pangenome_list = [PangenomeInfo(**pg) for pg in all_pangenomes]
+        
+        # Auto-select if only one pangenome total
         auto_selected = None
         if len(pangenome_list) == 1:
             auto_selected = pangenome_list[0].pangenome_id
@@ -463,22 +480,32 @@ async def get_pangenomes(
             auto_selected=auto_selected
         )
     except Exception as e:
+        logger.error(f"Error in get_pangenomes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/tables/{pangenome_id}", response_model=TableListResponse)
+@router.get("/tables", response_model=TableListResponse)
 async def get_tables(
-    pangenome_id: str,
-    berdl_table_id: str = Query(...),
+    berdl_table_id: str = Query(..., description="BERDLTables object reference"),
+    pangenome_id: Optional[str] = Query(None, description="Legacy parameter (ignored)"),
     kb_env: str = Query("appdev"),
     authorization: Optional[str] = Header(None)
 ):
-    """List tables for a pangenome (legacy endpoint)."""
+    """List tables for a BERDLTable object (auto-resolves pangenome)."""
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        db_path = download_pangenome_db(berdl_table_id, pangenome_id, token, cache_dir, kb_env)
+        # 1. Resolve pangenome_id from BERDL ID
+        pangenomes = list_pangenomes_from_object(berdl_table_id, token, kb_env)
+        if not pangenomes:
+            raise HTTPException(status_code=404, detail="No pangenomes found in object")
+            
+        # 1:1 relationship assumed as per user requirement
+        # Always pick the first one associated with this object
+        target_pangenome = pangenomes[0]["pangenome_id"]
+        
+        db_path = download_pangenome_db(berdl_table_id, target_pangenome, token, cache_dir, kb_env)
         table_names = list_tables(db_path)
         
         tables = []
@@ -490,9 +517,15 @@ async def get_tables(
             except:
                 tables.append(TableInfo(name=name))
         
-        return TableListResponse(pangenome_id=pangenome_id, tables=tables)
+        return TableListResponse(pangenome_id=target_pangenome, tables=tables)
     except Exception as e:
+        logger.error(f"Error listing tables: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+        
+# Legacy route redirect/alias if needed, but for now we replace logic
+@router.get("/tables/{pangenome_id}", include_in_schema=False)
+async def get_tables_legacy(pangenome_id: str, berdl_table_id: str = Query(...), kb_env: str = Query("appdev"), authorization: Optional[str] = Header(None)):
+    return await get_tables(berdl_table_id=berdl_table_id, pangenome_id=pangenome_id, kb_env=kb_env, authorization=authorization)
 
 
 @router.post("/table-data", response_model=TableDataResponse)
@@ -500,17 +533,29 @@ async def query_table_data(
     request: TableDataRequest,
     authorization: Optional[str] = Header(None)
 ):
-    """Query table data (legacy POST endpoint)."""
+    """Query table data."""
     start_time = time.time()
     
     try:
+        # Debugging log
+        print(f"Received request: {request} col_filter={request.col_filter}")
+        
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         kb_env = getattr(request, 'kb_env', 'appdev') or 'appdev'
         
-        db_path = download_pangenome_db(
-            request.berdl_table_id, request.pangenome_id, token, cache_dir, kb_env
-        )
+        # Determine filters (support both query_filters and col_filter)
+        filters = request.col_filter if request.col_filter else request.query_filters
+        print(f"Filters determined: {filters}")
+        
+        # Download (or get cached) DB - auto-resolves ID if None
+        try:
+            db_path = download_pangenome_db(
+                request.berdl_table_id, request.pangenome_id, token, cache_dir, kb_env
+            )
+        except ValueError as e:
+            # Handle cases where pangenome not found or resolution failed
+            raise HTTPException(status_code=404, detail=str(e))
         
         if not validate_table_exists(db_path, request.table_name):
             available = list_tables(db_path)
@@ -529,10 +574,17 @@ async def query_table_data(
             sort_column=request.sort_column,
             sort_order=request.sort_order,
             search_value=request.search_value,
-            query_filters=request.query_filters,
+            query_filters=filters,
+            columns=request.columns,
+            order_by=request.order_by
         )
         
         response_time_ms = (time.time() - start_time) * 1000
+        
+        # Extract the resolved pangenome ID from filename if possible, or just return what we have
+        # Since pangenome_id in response model is just for context, we can derive it from db_path
+        # db_path is .../cache/berdl_id/pangenome_id.db
+        resolved_pangenome_id = db_path.stem
         
         return TableDataResponse(
             headers=headers,
@@ -541,7 +593,7 @@ async def query_table_data(
             total_count=total_count,
             filtered_count=filtered_count,
             table_name=request.table_name,
-            pangenome_id=request.pangenome_id,
+            pangenome_id=resolved_pangenome_id,
             response_time_ms=response_time_ms,
             db_query_ms=db_query_ms,
             conversion_ms=conversion_ms,
