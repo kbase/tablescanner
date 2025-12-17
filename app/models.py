@@ -44,10 +44,6 @@ class SearchRequest(BaseModel):
         description="BERDLTables object reference (e.g., '76990/ADPITest')",
         examples=["76990/ADPITest"]
     )
-    pangenome_id: Optional[str] = Field(
-        None,
-        description="Pangenome ID within the BERDLTables object. Uses first available if not specified."
-    )
     table_name: str = Field(
         ...,
         description="Name of the table to query",
@@ -143,11 +139,6 @@ class TableDataRequest(BaseModel):
         description="Column-specific filters {column_name: filter_value}",
         examples=[{"gene_name": "kinase", "organism": "E. coli"}]
     )
-    pangenome_id: Optional[str] = Field(
-        None,
-        description="Specific pangenome ID (optimizes cache lookup)",
-        examples=["pg_123"]
-    )
     kb_env: str = Field(
         "appdev",
         description="KBase environment"
@@ -173,7 +164,7 @@ class TableInfo(BaseModel):
 
 class TableListResponse(BaseModel):
     """Response for listing tables in a pangenome database."""
-    pangenome_id: str = Field(..., description="Pangenome identifier")
+#    pangenome_id: str = Field(..., description="Pangenome identifier")
     tables: List[TableInfo] = Field(
         default_factory=list,
         description="List of available tables"
@@ -182,7 +173,7 @@ class TableListResponse(BaseModel):
 
 class PangenomeInfo(BaseModel):
     """Information about a pangenome found in the SQLite file."""
-    pangenome_id: str = Field(..., description="ID of the pangenome")
+#    pangenome_id: str = Field(..., description="ID of the pangenome")
     pangenome_taxonomy: Optional[str] = Field(None, description="Taxonomy of the pangenome")
     genome_count: int = Field(..., description="Number of genomes in the pangenome")
     source_berdl_id: str = Field(..., description="Source BERDL Table ID")
