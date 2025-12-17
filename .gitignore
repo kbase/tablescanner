@@ -1,3 +1,5 @@
+trash/
+
 .DS_Store
 .idea
 test/test.cfg
@@ -20,3 +22,9 @@ venv/
 
 # Environment variables
 .env
+
+# External libraries (cloned)
+lib/
+
+# Cache directory
+cache/

@@ -1,22 +1,66 @@
 """
 Utils module for TableScanner.
 
-Contains business logic separated from route handlers.
+Contains business logic for:
+- KBase Workspace API interactions via KBUtilLib
+- Blobstore/Shock downloading
+- Local file caching with age-based expiration
+- SQLite database querying with filtering/sorting/pagination
 """
 
-from app.utils.download import download_from_handle
-from app.utils.workspace import get_object_info
-from app.utils.cache import get_cache_paths, ensure_cache_dir, save_to_cache, is_cached
-from app.utils.sqlite import convert_to_sqlite, query_sqlite, get_table_data
+from app.utils.workspace import (
+    get_berdl_table_data,
+    list_pangenomes_from_object,
+    find_pangenome_handle,
+    download_pangenome_db,
+    get_object_info,
+    KBaseClient,
+)
+from app.utils.cache import (
+    get_cache_paths,
+    ensure_cache_dir,
+    save_to_cache,
+    is_cached,
+    clear_cache,
+    list_cached_items,
+    cleanup_old_caches,
+)
+from app.utils.sqlite import (
+    convert_to_sqlite,
+    query_sqlite,
+    get_table_data,
+    list_tables,
+    get_table_columns,
+    get_table_row_count,
+    validate_table_exists,
+    ensure_indices,
+)
 
 __all__ = [
-    "download_from_handle",
+    # Workspace utilities
+    "get_berdl_table_data",
+    "list_pangenomes_from_object",
+    "find_pangenome_handle",
+    "download_pangenome_db",
     "get_object_info",
+    "KBaseClient",
+    
+    # Cache utilities
     "get_cache_paths",
     "ensure_cache_dir",
     "save_to_cache",
     "is_cached",
+    "clear_cache",
+    "list_cached_items",
+    "cleanup_old_caches",
+    
+    # SQLite utilities
     "convert_to_sqlite",
     "query_sqlite",
     "get_table_data",
+    "list_tables",
+    "get_table_columns",
+    "get_table_row_count",
+    "validate_table_exists",
+    "ensure_indices",
 ]

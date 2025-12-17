@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TableScanner - BERDL Table Viewer</title>
+    <meta name="description" content="Research-grade viewer for KBase BERDL Table data">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --ts-primary: #6366f1;
+            --ts-primary-hover: #4f46e5;
+            --ts-success: #10b981;
+            --ts-warning: #f59e0b;
+            --ts-danger: #ef4444;
+            --ts-info: #3b82f6;
+            --ts-bg-dark: #0f172a;
+            --ts-bg-card: #1e293b;
+            --ts-bg-input: #334155;
+            --ts-border: #475569;
+            --ts-text: #f1f5f9;
+            --ts-text-muted: #94a3b8;
+            --ts-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+        }
+
+        [data-bs-theme="light"] {
+            --ts-bg-dark: #f8fafc;
+            --ts-bg-card: #ffffff;
+            --ts-bg-input: #f1f5f9;
+            --ts-border: #e2e8f0;
+            --ts-text: #1e293b;
+            --ts-text-muted: #64748b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--ts-bg-dark);
+            color: var(--ts-text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .ts-header {
+            background: var(--ts-gradient);
+            padding: 0.75rem 0;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+        }
+
+        .ts-header h1 {
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .ts-version {
+            font-size: 0.55rem;
+            padding: 0.1rem 0.4rem;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+        }
+
+        .ts-card {
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 10px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .ts-card-header {
+            font-weight: 600;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--ts-text-muted);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .ts-label {
+            display: block;
+            font-size: 0.65rem;
+            font-weight: 500;
+            margin-bottom: 0.2rem;
+            color: var(--ts-text-muted);
+        }
+
+        .ts-input,
+        .ts-select {
+            width: 100%;
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+            border-radius: 6px;
+            padding: 0.35rem 0.5rem;
+            font-size: 0.75rem;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+
+        .ts-input:focus,
+        .ts-select:focus {
+            border-color: var(--ts-primary);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+            outline: none;
+        }
+
+        .ts-input-sm {
+            padding: 0.25rem 0.4rem;
+            font-size: 0.7rem;
+        }
+
+        .ts-btn {
+            background: var(--ts-primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0.35rem 0.7rem;
+            font-weight: 500;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .ts-btn:hover:not(:disabled) {
+            background: var(--ts-primary-hover);
+        }
+
+        .ts-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .ts-btn-outline {
+            background: transparent;
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+        }
+
+        .ts-btn-outline:hover:not(:disabled) {
+            background: var(--ts-bg-input);
+        }
+
+        .ts-btn-sm {
+            padding: 0.2rem 0.4rem;
+            font-size: 0.65rem;
+        }
+
+        .ts-btn-success {
+            background: var(--ts-success);
+        }
+
+        .ts-btn-danger {
+            background: var(--ts-danger);
+        }
+
+        /* Data Table */
+        .ts-table-container {
+            border: 1px solid var(--ts-border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .ts-table-scroll {
+            max-height: 55vh;
+            overflow: auto;
+        }
+
+        .ts-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .ts-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .ts-table th {
+            background: var(--ts-bg-input);
+            color: var(--ts-text);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.4rem;
+            border-bottom: 2px solid var(--ts-border);
+            white-space: nowrap;
+            cursor: pointer;
+            user-select: none;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.65rem;
+        }
+
+        .ts-table th:hover {
+            background: rgba(99, 102, 241, 0.25);
+        }
+
+        .ts-table th.sort-asc::after {
+            content: ' ▲';
+            color: var(--ts-success);
+        }
+
+        .ts-table th.sort-desc::after {
+            content: ' ▼';
+            color: var(--ts-warning);
+        }
+
+        .ts-table th.hidden-col {
+            display: none;
+        }
+
+        .ts-table td {
+            padding: 0.3rem 0.4rem;
+            border-bottom: 1px solid var(--ts-border);
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ts-table td.hidden-col {
+            display: none;
+        }
+
+        /* Cell links - for transformed identifiers (UniProt, KEGG, etc.) */
+        .ts-cell-link {
+            color: var(--ts-info);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--ts-info);
+            transition: all 0.15s;
+        }
+
+        .ts-cell-link:hover {
+            color: var(--ts-primary);
+            border-bottom-color: var(--ts-primary);
+            border-bottom-style: solid;
+        }
+
+        .ts-cell-link::after {
+            content: ' ↗';
+            font-size: 0.55em;
+            opacity: 0.6;
+            vertical-align: super;
+        }
+
+        .ts-table tbody tr:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .ts-table tbody tr:nth-child(even) {
+            background: rgba(0, 0, 0, 0.03);
+        }
+
+        .ts-filter-row th {
+            padding: 0.2rem;
+            background: var(--ts-bg-card);
+        }
+
+        .ts-col-filter {
+            width: 100%;
+            padding: 0.15rem 0.3rem;
+            font-size: 0.65rem;
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            border-radius: 3px;
+            color: var(--ts-text);
+        }
+
+        /* Status bar */
+        .ts-status-bar {
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            font-size: 0.65rem;
+        }
+
+        .ts-status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .ts-status-value {
+            font-weight: 600;
+            color: var(--ts-primary);
+        }
+
+        .ts-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            font-size: 0.6rem;
+            font-weight: 500;
+        }
+
+        .ts-badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--ts-success);
+        }
+
+        .ts-badge-info {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--ts-info);
+        }
+
+        .ts-badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--ts-warning);
+        }
+
+        /* Pagination */
+        .ts-pagination {
+            display: flex;
+            align-items: center;
+            gap: 0.2rem;
+        }
+
+        .ts-page-btn {
+            background: var(--ts-bg-input);
+            border: 1px solid var(--ts-border);
+            color: var(--ts-text);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.65rem;
+            transition: all 0.1s;
+        }
+
+        .ts-page-btn:hover:not(:disabled) {
+            background: var(--ts-primary);
+            border-color: var(--ts-primary);
+        }
+
+        .ts-page-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .ts-page-btn.active {
+            background: var(--ts-primary);
+            border-color: var(--ts-primary);
+        }
+
+        /* Column panel */
+        .ts-panel {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 8px;
+            padding: 0.6rem;
+            min-width: 160px;
+            max-height: 260px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+            display: none;
+        }
+
+        .ts-panel.show {
+            display: block;
+        }
+
+        .ts-col-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.15rem 0;
+            font-size: 0.7rem;
+            cursor: pointer;
+        }
+
+        .ts-col-toggle:hover {
+            color: var(--ts-primary);
+        }
+
+        /* Loading/Empty */
+        .ts-loading,
+        .ts-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            color: var(--ts-text-muted);
+        }
+
+        .ts-spinner {
+            width: 28px;
+            height: 28px;
+            border: 3px solid var(--ts-border);
+            border-top-color: var(--ts-primary);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Alert */
+        .ts-alert {
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .ts-alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--ts-success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .ts-alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--ts-danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .ts-alert-info {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--ts-info);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        /* Tooltip */
+        .ts-tooltip {
+            position: fixed;
+            background: var(--ts-bg-card);
+            border: 1px solid var(--ts-border);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.7rem;
+            max-width: 360px;
+            word-wrap: break-word;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+            display: none;
+        }
+
+        .ts-tooltip.show {
+            display: block;
+        }
+
+        .ts-tooltip-header {
+            font-weight: 600;
+            color: var(--ts-primary);
+            margin-bottom: 0.15rem;
+            font-size: 0.6rem;
+        }
+
+        .ts-tooltip-value {
+            font-family: 'JetBrains Mono', monospace;
+            white-space: pre-wrap;
+        }
+
+        /* API Mode indicator */
+        .ts-api-mode {
+            font-size: 0.55rem;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+
+        .ts-api-local {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--ts-warning);
+        }
+
+        .ts-api-deployed {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--ts-success);
+        }
+    </style>
+</head>
+
+<body>
+    <header class="ts-header">
+        <div class="container-fluid px-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <h1>
+                    <i class="bi bi-table"></i>
+                    TableScanner
+                    <span class="ts-version">v1.0</span>
+                    <span class="ts-api-mode ts-api-local" id="apiModeLabel">Local</span>
+                </h1>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="ts-btn ts-btn-sm" id="themeToggle" title="Toggle Theme">
+                        <i class="bi bi-moon-stars"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container-fluid px-3 pb-3">
+        <!-- Connection -->
+        <div class="ts-card">
+            <div class="ts-card-header"><i class="bi bi-plug"></i> Connection</div>
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="ts-label">BERDLTable ID *</label>
+                    <div class="d-flex gap-1">
+                        <input type="text" class="ts-input" id="berdlTableId" value="76990/ADP1Test"
+                            placeholder="ws/obj">
+                        <button class="ts-btn" id="loadBerdlBtn" title="Load"><i class="bi bi-search"></i></button>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="ts-label">Auth Token *</label>
+                    <input type="password" class="ts-input" id="authToken" placeholder="KBase token">
+                </div>
+                <div class="col-md-4">
+                    <label class="ts-label">API URL</label>
+                    <select class="ts-select" id="apiUrlSelect">
+                        <option value="http://localhost:8000" selected>Local Development</option>
+                        <option value="https://appdev.kbase.us/services/berdl_table_scanner">Deployed (AppDev)</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="ts-label">&#160;</label>
+                    <button class="ts-btn ts-btn-danger ts-btn-sm w-100" id="clearCacheBtn" title="Clear client cache">
+                        <i class="bi bi-trash"></i> Clear Cache
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <!-- Data Selection -->
+        <div class="row g-2">
+            <div class="col-md-7">
+                <div class="ts-card">
+                    <div class="ts-card-header"><i class="bi bi-collection"></i> Data Selection</div>
+                    <div class="row g-2">
+                        <div class="col-4">
+                            <label class="ts-label">Pangenome</label>
+                            <select class="ts-select" id="pangenomeSelect" disabled>
+                                <option value="">Load BERDLTable first</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">Table</label>
+                            <select class="ts-select" id="tableSelect" disabled>
+                                <option value="">Select pangenome</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">&#160;</label>
+                            <div class="d-flex gap-1">
+                                <button class="ts-btn ts-btn-success flex-grow-1" id="loadDataBtn" disabled>
+                                    <i class="bi bi-play-fill"></i> Load All
+                                </button>
+                                <button class="ts-btn ts-btn-outline" id="refreshBtn" disabled title="Re-fetch">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-5">
+                <div class="ts-card">
+                    <div class="ts-card-header"><i class="bi bi-funnel"></i> View Controls</div>
+                    <div class="row g-2">
+                        <div class="col-5">
+                            <label class="ts-label">Search</label>
+                            <input type="text" class="ts-input" id="clientSearch" placeholder="Filter rows...">
+                        </div>
+                        <div class="col-3">
+                            <label class="ts-label">Rows/Page</label>
+                            <select class="ts-select" id="pageSizeSelect">
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100" selected>100</option>
+                                <option value="250">250</option>
+                                <option value="500">500</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <label class="ts-label">Actions</label>
+                            <div class="d-flex gap-1 position-relative">
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="columnsBtn" title="Columns">
+                                    <i class="bi bi-layout-three-columns"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="filtersBtn" title="Filters">
+                                    <i class="bi bi-filter"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="resetViewBtn" title="Reset">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                                <button class="ts-btn ts-btn-outline ts-btn-sm" id="exportCsvBtn" disabled title="CSV">
+                                    <i class="bi bi-file-earmark-text"></i>
+                                </button>
+                                <div class="ts-panel" id="columnPanel"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="ts-card">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="ts-card-header mb-0"><i class="bi bi-table"></i> Data</span>
+                    <span class="ts-badge ts-badge-info" id="tableBadge">No data</span>
+                    <span class="ts-badge ts-badge-success" id="cacheBadge" style="display:none;">
+                        <i class="bi bi-hdd"></i> Cached
+                    </span>
+                </div>
+                <div class="small text-muted" id="rowInfo">
+                    <strong id="showStart">0</strong>-<strong id="showEnd">0</strong>
+                    of <strong id="filteredCount">0</strong>
+                    (Total: <strong id="totalCount">0</strong>)
+                </div>
+            </div>
+
+            <div class="ts-loading" id="loadingState" style="display:none;">
+                <div class="ts-spinner"></div>
+                <p class="mt-2 mb-0" style="font-size:0.75rem;">Loading from KBase...</p>
+            </div>
+
+            <div class="ts-empty" id="emptyState">
+                <i class="bi bi-inbox" style="font-size:2rem;opacity:0.4;"></i>
+                <p class="mt-2 mb-0" style="font-size:0.75rem;">Enter BERDLTable ID and click search</p>
+            </div>
+
+            <div class="ts-table-container" id="tableContainer" style="display:none;">
+                <div class="ts-table-scroll" id="tableScroll">
+                    <table class="ts-table" id="dataTable">
+                        <thead id="tableHead"></thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-center mt-2" id="paginationRow" style="display:none;">
+                <div class="ts-pagination" id="pagination"></div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="ts-status-bar">
+            <div class="ts-status-item">
+                <i class="bi bi-circle-fill" id="statusIcon" style="color:var(--ts-text-muted);font-size:0.4rem;"></i>
+                <span id="statusText">Ready</span>
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-clock"></i> <span class="ts-status-value" id="apiTime">--</span>ms
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-hdd"></i> <span class="ts-status-value" id="dataSource">--</span>
+            </div>
+            <div class="ts-status-item">
+                <i class="bi bi-file-earmark"></i>
+                <span class="ts-status-value" id="dbFile" style="font-family:monospace;font-size:0.6rem;">--</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- Tooltip -->
+    <div class="ts-tooltip" id="cellTooltip">
+        <div class="ts-tooltip-header" id="tooltipHeader"></div>
+        <div class="ts-tooltip-value" id="tooltipValue"></div>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            // =================================================================
+            // STATE - Client-side caching
+            // =================================================================
+            const state = {
+                cache: new Map(),
+                currentKey: null,
+                allHeaders: [],
+                allData: [],
+                visibleColumns: new Set(),
+                sortColumn: null,
+                sortOrder: 'asc',
+                columnFilters: {},
+                clientSearch: '',
+                currentPage: 0,
+                pageSize: 100,
+                filteredData: [],
+                pagedData: [],
+                pagedData: [],
+                showFilters: false,
+                lastTable: null
+            };
+
+            // =================================================================
+            // DOM ELEMENTS
+            // =================================================================
+            const $ = id => document.getElementById(id);
+            const dom = {
+                berdlTableId: $('berdlTableId'),
+                authToken: $('authToken'),
+                apiUrlSelect: $('apiUrlSelect'),
+                apiModeLabel: $('apiModeLabel'),
+                // kbEnvSelect removed
+                loadBerdlBtn: $('loadBerdlBtn'),
+                pangenomeSelect: $('pangenomeSelect'),
+                tableSelect: $('tableSelect'),
+                loadDataBtn: $('loadDataBtn'),
+                refreshBtn: $('refreshBtn'),
+                clearCacheBtn: $('clearCacheBtn'),
+                clientSearch: $('clientSearch'),
+                pageSizeSelect: $('pageSizeSelect'),
+                columnsBtn: $('columnsBtn'),
+                filtersBtn: $('filtersBtn'),
+                resetViewBtn: $('resetViewBtn'),
+                columnPanel: $('columnPanel'),
+                loadingState: $('loadingState'),
+                emptyState: $('emptyState'),
+                tableContainer: $('tableContainer'),
+                tableHead: $('tableHead'),
+                tableBody: $('tableBody'),
+                paginationRow: $('paginationRow'),
+                pagination: $('pagination'),
+                tableBadge: $('tableBadge'),
+                cacheBadge: $('cacheBadge'),
+                exportCsvBtn: $('exportCsvBtn'),
+                showStart: $('showStart'),
+                showEnd: $('showEnd'),
+                filteredCount: $('filteredCount'),
+                totalCount: $('totalCount'),
+                statusIcon: $('statusIcon'),
+                statusText: $('statusText'),
+                apiTime: $('apiTime'),
+                dataSource: $('dataSource'),
+                dbFile: $('dbFile'),
+                alertArea: $('alertArea'),
+                themeToggle: $('themeToggle'),
+                cellTooltip: $('cellTooltip'),
+                tooltipHeader: $('tooltipHeader'),
+                tooltipValue: $('tooltipValue')
+            };
+
+            // =================================================================
+            // UTILITIES
+            // =================================================================
+            function debounce(fn, ms) {
+                let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+            }
+
+            function getApiUrl() {
+                return dom.apiUrlSelect.value;
+            }
+
+            function updateApiModeLabel() {
+                const isLocal = getApiUrl().includes('localhost');
+                dom.apiModeLabel.textContent = isLocal ? 'Local' : 'Deployed';
+                dom.apiModeLabel.className = 'ts-api-mode ' + (isLocal ? 'ts-api-local' : 'ts-api-deployed');
+            }
+
+            function setStatus(text, type = 'info') {
+                dom.statusText.textContent = text;
+                const colors = {
+                    info: 'var(--ts-text-muted)', success: 'var(--ts-success)',
+                    warning: 'var(--ts-warning)', error: 'var(--ts-danger)', loading: 'var(--ts-primary)'
+                };
+                dom.statusIcon.style.color = colors[type] || colors.info;
+            }
+
+            function showAlert(msg, type = 'info') {
+                dom.alertArea.innerHTML = `<div class="ts-alert ts-alert-${type}" title="${msg.replace(/"/g, '&quot;')}"><i class="bi bi-${type === 'error' ? 'exclamation-circle' : type === 'success' ? 'check-circle' : 'info-circle'}"></i>${msg}</div>`;
+                setTimeout(() => dom.alertArea.innerHTML = '', 4000);
+            }
+
+            function getCacheKey() {
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                const pangenomeId = selectedOption ? selectedOption.value : '';
+                const berdlId = selectedOption ? selectedOption.dataset.berdl : '';
+                return `${berdlId}|${pangenomeId}|${dom.tableSelect.value}`;
+            }
+
+            function getHeaders() {
+                const h = { 'Content-Type': 'application/json' };
+                if (dom.authToken.value) h['Authorization'] = dom.authToken.value;
+                return h;
+            }
+
+            // =================================================================
+            // CELL VALUE TRANSFORMATIONS
+            // Transform cell values into clickable links for known identifiers
+            // =================================================================
+
+            /**
+             * Pattern definitions for biological database identifiers.
+             * Each pattern has: regex to match, URL template, and display formatter.
+             */
+            const LINK_PATTERNS = [
+                // UniProt - matches UniProt:P12345 or column context
+                {
+                    name: 'uniprot',
+                    regex: /^(?:UniProt:)?([A-Z][0-9][A-Z0-9]{3}[0-9]|[A-Z][A-Z0-9]{5}[0-9](?:\-\d+)?)$/i,
+                    url: (id) => `https://www.uniprot.org/uniprotkb/${id}`,
+                    columns: ['uniprot_id', 'uniprot', 'swissprot_id']
+                },
+                // KEGG - matches KEGG:eco:b0001 or eco:b0001
+                {
+                    name: 'kegg',
+                    regex: /^(?:KEGG:)?([a-z]{2,4}:[a-zA-Z0-9_]+)$/i,
+                    url: (id) => `https://www.genome.jp/entry/${id}`,
+                    columns: ['kegg_id', 'kegg', 'kegg_gene']
+                },
+                // Gene Ontology - matches GO:0008150
+                {
+                    name: 'go',
+                    regex: /^(GO:\d{7})$/i,
+                    url: (id) => `https://amigo.geneontology.org/amigo/term/${id.toUpperCase()}`,
+                    columns: ['go_id', 'go_term', 'gene_ontology']
+                },
+                // Enzyme Commission - matches EC:1.2.3.4 or 1.2.3.4
+                {
+                    name: 'ec',
+                    regex: /^(?:EC:)?(\d+\.\d+\.\d+\.\d+)$/,
+                    url: (id) => `https://enzyme.expasy.org/EC/${id}`,
+                    columns: ['ec_number', 'ec_id', 'ec']
+                },
+                // PDB - matches PDB:1ABC or 1ABC (4 chars)
+                {
+                    name: 'pdb',
+                    regex: /^(?:PDB:)?([0-9][A-Z0-9]{3})$/i,
+                    url: (id) => `https://www.rcsb.org/structure/${id.toUpperCase()}`,
+                    columns: ['pdb_id', 'pdb', 'structure_id']
+                },
+                // RefSeq - matches NC_, NP_, NM_, XP_, etc.
+                {
+                    name: 'refseq',
+                    regex: /^([ANXYW][CGMPRTW]_\d+(?:\.\d+)?)$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/nuccore/${id}`,
+                    columns: ['refseq_id', 'refseq', 'accession']
+                },
+                // GenBank - matches typical accession patterns
+                {
+                    name: 'genbank',
+                    regex: /^([A-Z]{1,2}\d{5,6}(?:\.\d+)?)$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/nuccore/${id}`,
+                    columns: ['genbank_id', 'genbank', 'accession']
+                },
+                // NCBI Gene ID - numeric only in gene_id columns
+                {
+                    name: 'ncbi_gene',
+                    regex: /^(\d{4,})$/,
+                    url: (id) => `https://www.ncbi.nlm.nih.gov/gene/${id}`,
+                    columns: ['gene_id', 'ncbi_gene_id', 'entrez_id']
+                },
+                // URLs - http/https links
+                {
+                    name: 'url',
+                    regex: /^(https?:\/\/[^\s]+)$/i,
+                    url: (match) => match,
+                    columns: []  // Match in any column
+                }
+            ];
+
+            /**
+             * Transform a cell value into HTML, creating links where appropriate.
+             * @param {string} value - The cell value
+             * @param {string} columnName - The column header name (for context)
+             * @returns {string} HTML string with links if applicable
+             */
+            function transformCellValue(value, columnName) {
+                if (value === null || value === undefined || value === '') {
+                    return '';
+                }
+
+                const strVal = String(value).trim();
+                if (!strVal) return '';
+
+                // Escape HTML first
+                const escaped = strVal
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+
+                const colLower = columnName.toLowerCase();
+
+                // Check each pattern
+                for (const pattern of LINK_PATTERNS) {
+                    // Check if column matches known columns for this pattern
+                    const columnMatch = pattern.columns.length === 0 ||
+                        pattern.columns.some(c => colLower.includes(c));
+
+                    if (!columnMatch && pattern.columns.length > 0) continue;
+
+                    const match = strVal.match(pattern.regex);
+                    if (match) {
+                        const id = match[1] || match[0];
+                        const url = pattern.url(id);
+                        return `<a href="${url}" target="_blank" rel="noopener" class="ts-cell-link" title="${pattern.name.toUpperCase()}: ${id}">${escaped}</a>`;
+                    }
+                }
+
+                return escaped;
+            }
+
+            /**
+             * Check if a value looks like it could be linkified.
+             * Used for tooltip display.
+             */
+            function isLinkableValue(value, columnName) {
+                if (!value) return false;
+                const strVal = String(value).trim();
+                const colLower = columnName.toLowerCase();
+
+                for (const pattern of LINK_PATTERNS) {
+                    const columnMatch = pattern.columns.length === 0 ||
+                        pattern.columns.some(c => colLower.includes(c));
+                    if (columnMatch && pattern.regex.test(strVal)) {
+                        return pattern.name;
+                    }
+                }
+                return null;
+            }
+
+            // =================================================================
+            // UI STATE
+            // =================================================================
+            function showLoading() {
+                dom.loadingState.style.display = 'flex';
+                dom.emptyState.style.display = 'none';
+                dom.tableContainer.style.display = 'none';
+                dom.paginationRow.style.display = 'none';
+                setStatus('Loading...', 'loading');
+            }
+
+            function hideLoading() { dom.loadingState.style.display = 'none'; }
+
+            function showEmpty() {
+                dom.emptyState.style.display = 'flex';
+                dom.tableContainer.style.display = 'none';
+                dom.paginationRow.style.display = 'none';
+            }
+
+            function showTable() {
+                dom.emptyState.style.display = 'none';
+                dom.tableContainer.style.display = 'block';
+                dom.paginationRow.style.display = 'flex';
+            }
+
+            // =================================================================
+            // API CALLS
+            // =================================================================
+
+            /**
+             * Load pangenomes from BERDLTable object.
+             * Handles auto-selection when only one pangenome exists.
+             */
+            async function loadPangenomes() {
+                const berdlIdInput = dom.berdlTableId.value.trim();
+
+                // Allow multiple IDs (split by comma, clean whitespace)
+                // Filter out empty strings
+                const berdlIds = berdlIdInput.split(',').map(s => s.trim()).filter(Boolean);
+
+                if (berdlIds.length === 0) { showAlert('Enter BERDLTable ID(s)', 'error'); return; }
+                if (!dom.authToken.value) { showAlert('Enter Auth Token', 'error'); return; }
+
+                setStatus('Loading pangenomes...', 'loading');
+
+                try {
+                    const url = new URL(`${getApiUrl()}/pangenomes`);
+                    // Join back with commas for the API call
+                    url.searchParams.set('berdl_table_id', berdlIds.join(','));
+
+                    const res = await fetch(url, { headers: getHeaders() });
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+                    const pgs = data.pangenomes || [];
+                    const autoSelected = data.auto_selected;
+
+                    // Populate dropdown with group context if multiple IDs used
+                    // Format: "PangenomeID - SourceID"
+                    // VALUE: source_berdl_id (as pangenome_id is now inferred)
+                    dom.pangenomeSelect.innerHTML = pgs.length
+                        ? pgs.map(p => {
+                            const label = `${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''} [${p.source_berdl_id}]`;
+                            return `<option value="${p.pangenome_id}" data-berdl="${p.source_berdl_id}">${label}</option>`;
+                        }).join('')
+                        : '<option value="">No pangenomes found</option>';
+
+                    dom.pangenomeSelect.disabled = pgs.length === 0;
+                    dom.refreshBtn.disabled = pgs.length === 0;
+
+                    // Auto-select if ONLY one pangenome
+                    // Since value is now source_berdl_id, we need to find it from the data
+                    if (autoSelected) {
+                        // Find the corresponding source_berdl_id for the autoSelected pangenome_id
+                        const target = pgs.find(p => p.pangenome_id === autoSelected);
+                        if (target) {
+                            dom.pangenomeSelect.value = target.pangenome_id;
+                            setStatus(`Auto-selected: ${autoSelected}`, 'success');
+                        }
+                    } else {
+                        // If multiple IDs, just show count
+                        setStatus(`Found ${pgs.length} pangenomes from ${berdlIds.length} source(s)`, 'success');
+                    }
+
+                    if (pgs.length) await loadTables();
+
+                } catch (err) {
+                    setStatus(`Error: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            async function loadTables() {
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                if (!selectedOption) return;
+
+                const berdlId = selectedOption.dataset.berdl;
+                if (!berdlId) return;
+
+                setStatus('Loading tables...', 'loading');
+
+                try {
+                    const url = new URL(`${getApiUrl()}/tables`);
+                    url.searchParams.set('berdl_table_id', berdlId);
+
+                    const res = await fetch(url, { headers: getHeaders() });
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+
+                    // Populate table select
+                    dom.tableSelect.innerHTML = data.tables.length
+                        ? data.tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count} rows)</option>`).join('')
+                        : '<option value="">No tables found</option>';
+
+                    dom.tableSelect.disabled = data.tables.length === 0;
+
+                    // Auto-load first table if no specific selection
+                    if (data.tables.length) {
+                        dom.tableSelect.selectedIndex = 0;
+                        await loadTableData();
+                    } else {
+                        showEmpty();
+                    }
+                    setStatus(`Loaded ${data.tables.length} tables`, 'success');
+
+                } catch (err) {
+                    setStatus(`Error: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            function refreshData() {
+                loadTableData();
+            }
+
+            async function loadTableData(forceRefresh = false) {
+                const key = getCacheKey();
+
+                // Check client cache
+                if (!forceRefresh && state.cache.has(key)) {
+                    const cached = state.cache.get(key);
+                    state.currentKey = key;
+                    state.allHeaders = cached.headers;
+                    state.allData = cached.data;
+
+                    if (state.visibleColumns.size === 0) {
+                        state.visibleColumns = new Set(state.allHeaders);
+                    }
+
+                    dom.cacheBadge.style.display = 'inline-flex';
+                    dom.dataSource.textContent = 'Client Cache';
+                    dom.apiTime.textContent = '0';
+                    setStatus('Loaded from client cache', 'success');
+
+                    applyFiltersAndRender();
+                    return;
+                }
+
+                // =================================================================
+                // STATE MANAGEMENT & SERVER-SIDE DATA FETCHING
+                // =================================================================
+
+                // Trigger a data refresh based on current state
+
+                if (!dom.tableSelect.value) return;
+
+                // If loading from distinct cache key (pangenome+table), reset view only if needed
+                // But generally we just fetch with current state
+
+                showLoading();
+
+                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
+                const berdlId = selectedOption.dataset.berdl;
+                const pangenomeId = selectedOption.value;
+
+                // Construct request based on STATE
+                const body = {
+                    berdl_table_id: berdlId,
+                    pangenome_id: pangenomeId,
+                    table_name: dom.tableSelect.value,
+                    limit: state.pageSize,
+                    offset: state.currentPage * state.pageSize,
+                    columns: 'all',
+                    col_filter: state.columnFilters,
+                    search_value: state.clientSearch,
+                    sort_column: state.sortColumn,
+                    sort_order: state.sortOrder ? state.sortOrder.toUpperCase() : 'ASC'
+                };
+
+                // Add order_by if sorting is active (backend expects list for strictly complex sorts, but simple fields work too)
+                if (state.sortColumn) {
+                    body.order_by = [{
+                        column: state.sortColumn,
+                        direction: state.sortOrder ? state.sortOrder.toUpperCase() : 'ASC'
+                    }];
+                }
+
+                try {
+                    const res = await fetch(`${getApiUrl()}/table-data`, {
+                        method: 'POST',
+                        headers: getHeaders(),
+                        body: JSON.stringify(body)
+                    });
+
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    const data = await res.json();
+                    state.allData = data.data || []; // Current page data
+                    state.allHeaders = data.headers || [];
+                    state.totalRows = data.filtered_count; // Use filtered count for pagination
+                    state.serverTotal = data.row_count;
+
+                    state.serverTotal = data.row_count;
+
+                    // Reset visible columns if table changed or first load
+                    if (state.lastTable !== body.table_name || state.visibleColumns.size === 0) {
+                        state.visibleColumns = new Set(state.allHeaders);
+                        state.lastTable = body.table_name;
+                        renderHeaders();
+                    }
+
+                    // Update UI components
+                    dom.cacheBadge.style.display = 'none';
+                    dom.apiTime.textContent = data.response_time_ms?.toFixed(0) || '--';
+                    dom.dataSource.textContent = data.source || 'Server';
+                    dom.dbFile.textContent = data.sqlite_file ? data.sqlite_file.split('/').pop() : '--';
+
+                    hideLoading();
+
+                    // Render ONLY body and updates
+                    renderBody();
+                    updatePagination();
+                    updateHeaderIcons(); // Update sort icons without destroying inputs
+                    updateColumnPanel();
+                    updateCounts();
+
+                } catch (err) {
+                    hideLoading();
+                    showEmpty();
+                    setStatus(`Error: ${err.message}`, 'error');
+                    console.error(err);
+                }
+            }
+
+            // =================================================================
+            // RENDERING
+            // =================================================================
+
+            function renderHeaders() {
+                const headers = state.allHeaders;
+
+                // Header row
+                let headerHtml = '<tr>';
+                headers.forEach(h => {
+                    const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                    headerHtml += `<th class="${hidden}" data-col="${h}">${h}</th>`;
+                });
+                headerHtml += '</tr>';
+
+                // Filter row (Persist values if re-rendering)
+                // Note: We use state.columnFilters to populate, but usually we just toggle visibility
+                let filterHtml = '<tr class="ts-filter-row" style="display:' + (state.showFilters ? '' : 'none') + ';">';
+                headers.forEach(h => {
+                    const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                    const val = state.columnFilters[h] || '';
+                    filterHtml += `<th class="${hidden}"><input type="text" class="ts-col-filter" data-filter="${h}" value="${val}" placeholder="..."></th>`;
+                });
+                filterHtml += '</tr>';
+
+                dom.tableHead.innerHTML = headerHtml + filterHtml;
+            }
+
+            function renderBody() {
+                const headers = state.allHeaders;
+                const data = state.allData; // This is now just the current page
+
+                if (!headers.length) { showEmpty(); return; }
+                showTable();
+
+                dom.tableBody.innerHTML = data.map((row, ri) => {
+                    return '<tr>' + headers.map((h, ci) => {
+                        const hidden = !state.visibleColumns.has(h) ? ' hidden-col' : '';
+                        const rawVal = row[ci] ?? '';
+                        const displayVal = transformCellValue(rawVal, h);
+                        return `<td class="${hidden}" data-row="${ri}" data-col="${ci}" data-raw="${String(rawVal).replace(/"/g, '&quot;')}">${displayVal}</td>`;
+                    }).join('') + '</tr>';
+                }).join('');
+            }
+
+            function updateHeaderIcons() {
+                // update sort classes
+                document.querySelectorAll('.ts-table thead th[data-col]').forEach(th => {
+                    th.classList.remove('sort-asc', 'sort-desc');
+                    if (th.dataset.col === state.sortColumn) {
+                        th.classList.add(state.sortOrder === 'asc' ? 'sort-asc' : 'sort-desc');
+                    }
+                });
+
+                // update visibility classes
+                const headers = state.allHeaders;
+                const visibleHeaders = headers.filter(h => state.visibleColumns.has(h));
+
+                // We'd need to complex match indices to update hidden classes dynamically
+                // For now, if visibility changes, we might need full re-render, 
+                // but for sorting/filtering we rely on updateHeaderIcons.
+            }
+
+            function updateCounts() {
+                dom.tableBadge.textContent = dom.tableSelect.value;
+                dom.totalCount.textContent = state.serverTotal || 0;
+                dom.filteredCount.textContent = state.totalRows || 0;
+
+                const start = state.currentPage * state.pageSize;
+                const count = state.allData.length;
+                dom.showStart.textContent = count ? start + 1 : 0;
+                dom.showEnd.textContent = start + count;
+            }
+
+            function updatePagination() {
+                const totalPages = Math.ceil((state.totalRows || 0) / state.pageSize);
+
+                if (totalPages <= 1) {
+                    dom.pagination.innerHTML = '';
+                    return;
+                }
+
+                let html = '';
+                // First/Prev
+                html += `<button class="ts-page-btn" data-page="0" ${state.currentPage === 0 ? 'disabled' : ''}>«</button>`;
+                html += `<button class="ts-page-btn" data-page="${state.currentPage - 1}" ${state.currentPage === 0 ? 'disabled' : ''}>‹</button>`;
+
+                const maxBtns = 7;
+                let start = Math.max(0, state.currentPage - 3);
+                let end = Math.min(totalPages, start + maxBtns);
+                if (end - start < maxBtns) start = Math.max(0, end - maxBtns);
+
+                for (let i = start; i < end; i++) {
+                    html += `<button class="ts-page-btn${i === state.currentPage ? ' active' : ''}" data-page="${i}">${i + 1}</button>`;
+                }
+
+                // Next/Last
+                html += `<button class="ts-page-btn" data-page="${state.currentPage + 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>›</button>`;
+                html += `<button class="ts-page-btn" data-page="${totalPages - 1}" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>»</button>`;
+
+                dom.pagination.innerHTML = html;
+            }
+
+            function updateColumnPanel() {
+                dom.columnPanel.innerHTML = '<div class="ts-card-header mb-1"><i class="bi bi-eye"></i> Columns</div>' +
+                    '<div class="mb-2"><button class="ts-btn ts-btn-sm ts-btn-outline" id="selectAllCols">All</button> <button class="ts-btn ts-btn-sm ts-btn-outline" id="selectNoneCols">None</button></div>' +
+                    state.allHeaders.map(h => `
+                    <label class="ts-col-toggle">
+                        <input type="checkbox" data-toggle-col="${h}" ${state.visibleColumns.has(h) ? 'checked' : ''}>
+                        ${h}
+                    </label>
+                `).join('');
+            }
+
+            // =================================================================
+            // EXPORT
+            // =================================================================
+            function exportCsv() {
+                const visibleHeaders = state.allHeaders.filter(h => state.visibleColumns.has(h));
+                const visibleIndices = visibleHeaders.map(h => state.allHeaders.indexOf(h));
+
+                let csv = visibleHeaders.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
+                state.allData.forEach(row => {
+                    csv += visibleIndices.map(i => `"${String(row[i] ?? '').replace(/"/g, '""')}"`).join(',') + '\n';
+                });
+
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${dom.tableSelect.value}_page_${state.currentPage + 1}.csv`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            // =================================================================
+            // TOOLTIP
+            // =================================================================
+            function showTooltip(e, col, value) {
+                // Check if this value is linkable
+                const linkType = isLinkableValue(value, col);
+                const header = linkType
+                    ? `${col} [${linkType.toUpperCase()}]`
+                    : col;
+
+                dom.tooltipHeader.textContent = header;
+                dom.tooltipValue.textContent = value || '(empty)';
+                dom.cellTooltip.style.left = (e.clientX + 10) + 'px';
+                dom.cellTooltip.style.top = (e.clientY + 10) + 'px';
+                dom.cellTooltip.classList.add('show');
+            }
+
+            function hideTooltip() {
+                dom.cellTooltip.classList.remove('show');
+            }
+
+            // =================================================================
+            // EVENT HANDLERS
+            // =================================================================
+            dom.apiUrlSelect.addEventListener('change', updateApiModeLabel);
+            dom.loadBerdlBtn.addEventListener('click', loadPangenomes);
+            dom.berdlTableId.addEventListener('keypress', e => { if (e.key === 'Enter') loadPangenomes(); });
+            dom.pangenomeSelect.addEventListener('change', loadTables);
+            dom.tableSelect.addEventListener('change', () => dom.loadDataBtn.disabled = !dom.tableSelect.value);
+            dom.loadDataBtn.addEventListener('click', () => loadTableData(false));
+            dom.refreshBtn.addEventListener('click', () => loadTableData(true));
+
+            dom.clearCacheBtn.addEventListener('click', () => {
+                state.cache.clear();
+                showAlert('Client cache cleared', 'success');
+                setStatus('Cache cleared', 'info');
+            });
+
+            dom.clientSearch.addEventListener('input', debounce(() => {
+                state.clientSearch = dom.clientSearch.value;
+                state.currentPage = 0;
+                refreshData();
+            }, 500));
+
+            dom.pageSizeSelect.addEventListener('change', () => {
+                state.pageSize = parseInt(dom.pageSizeSelect.value);
+                state.currentPage = 0;
+                refreshData();
+            });
+
+            dom.columnsBtn.addEventListener('click', () => dom.columnPanel.classList.toggle('show'));
+
+            dom.filtersBtn.addEventListener('click', () => {
+                // Toggle state
+                state.showFilters = !state.showFilters;
+                // Update UI visibility
+                document.querySelectorAll('.ts-filter-row').forEach(r => {
+                    r.style.display = state.showFilters ? '' : 'none';
+                });
+            });
+
+            dom.resetViewBtn.addEventListener('click', () => {
+                state.visibleColumns = new Set(state.allHeaders);
+                state.sortColumn = null;
+                state.sortOrder = 'asc';
+                state.columnFilters = {};
+                state.clientSearch = '';
+                state.currentPage = 0;
+                dom.clientSearch.value = '';
+                // Render headers to clear filter inputs physically
+                renderHeaders();
+                refreshData();
+            });
+
+            dom.exportCsvBtn.addEventListener('click', exportCsv);
+
+            dom.themeToggle.addEventListener('click', () => {
+                const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+                document.documentElement.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
+                dom.themeToggle.innerHTML = isDark ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
+            });
+
+            document.addEventListener('click', e => {
+                if (!dom.columnPanel.contains(e.target) && !dom.columnsBtn.contains(e.target)) {
+                    dom.columnPanel.classList.remove('show');
+                }
+            });
+
+            // Table header click (sort)
+            document.addEventListener('click', e => {
+                const th = e.target.closest('.ts-table th[data-col]');
+                if (th && !e.target.classList.contains('ts-col-filter')) {
+                    const col = th.dataset.col;
+                    if (state.sortColumn === col) {
+                        state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        state.sortColumn = col;
+                        state.sortOrder = 'asc';
+                    }
+                    state.currentPage = 0;
+                    refreshData();
+                }
+            });
+
+            // Column filter input (Debounced Server Call)
+            document.addEventListener('input', debounce(e => {
+                if (e.target.dataset.filter) {
+                    const col = e.target.dataset.filter;
+                    const val = e.target.value.trim();
+                    if (val) state.columnFilters[col] = val;
+                    else delete state.columnFilters[col];
+                    state.currentPage = 0;
+                    refreshData();
+                }
+            }, 500));
+
+            // Pagination
+            document.addEventListener('click', e => {
+                const btn = e.target.closest('.ts-page-btn[data-page]');
+                if (btn && !btn.disabled) {
+                    state.currentPage = parseInt(btn.dataset.page);
+                    refreshData();
+                }
+            });
+
+            // Column toggle
+            document.addEventListener('change', e => {
+                if (e.target.dataset.toggleCol) {
+                    const col = e.target.dataset.toggleCol;
+                    if (e.target.checked) state.visibleColumns.add(col);
+                    else state.visibleColumns.delete(col);
+                    renderHeaders();
+                    renderBody();
+                }
+            });
+
+            document.addEventListener('click', e => {
+                if (e.target.id === 'selectAllCols') {
+                    state.visibleColumns = new Set(state.allHeaders);
+                    renderHeaders();
+                    renderBody();
+                    updateColumnPanel();
+                } else if (e.target.id === 'selectNoneCols') {
+                    state.visibleColumns.clear();
+                    renderHeaders();
+                    renderBody();
+                    updateColumnPanel();
+                }
+            });
+
+            // Cell tooltip 
+            document.addEventListener('mouseover', e => {
+                if (e.target.matches('.ts-table td')) {
+                    const colIdx = parseInt(e.target.dataset.col);
+                    const col = state.allHeaders[colIdx];
+                    const rawValue = e.target.dataset.raw || e.target.textContent;
+                    showTooltip(e, col, rawValue);
+                }
+            });
+
+            document.addEventListener('mouseout', e => {
+                if (e.target.matches('.ts-table td')) hideTooltip();
+            });
+
+            document.addEventListener('mousemove', e => {
+                if (dom.cellTooltip.classList.contains('show')) {
+                    dom.cellTooltip.style.left = (e.clientX + 10) + 'px';
+                    dom.cellTooltip.style.top = (e.clientY + 10) + 'px';
+                }
+            });
+
+            // Init
+            updateApiModeLabel();
+
+        })();
+    </script>
+</body>
+
+</html>
