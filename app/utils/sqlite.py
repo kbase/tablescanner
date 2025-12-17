@@ -20,6 +20,18 @@ from typing import Any, List, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _validate_table_name(cursor, table_name: str) -> None:
+    """
+    Validate that table_name corresponds to an existing table in the database.
+    Prevents SQL injection by ensuring table_name is a valid identifier.
+    """
+    # Parameterized query is safe from injection
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+    if not cursor.fetchone():
+        # Check for case-insensitive match or just fail
+        raise ValueError(f"Invalid table name: {table_name}")
+
+
 # =============================================================================
 # TABLE LISTING & METADATA
 # =============================================================================
@@ -75,6 +87,9 @@ def get_table_columns(db_path: Path, table_name: str) -> List[str]:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
+        # Validate table name to prevent injection
+        _validate_table_name(cursor, table_name)
+
         # Use PRAGMA to get table info
         cursor.execute(f"PRAGMA table_info({table_name})")
         columns = [row[1] for row in cursor.fetchall()]
@@ -101,6 +116,8 @@ def get_table_row_count(db_path: Path, table_name: str) -> int:
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
+
+        _validate_table_name(cursor, table_name)
 
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         count = cursor.fetchone()[0]
@@ -145,6 +162,8 @@ def ensure_indices(db_path: Path, table_name: str) -> None:
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
+
+        _validate_table_name(cursor, table_name)
 
         # Get columns
         cursor.execute(f"PRAGMA table_info({table_name})")
@@ -241,6 +260,9 @@ def get_table_data(
         conn = sqlite3.connect(str(sqlite_file))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+
+        # Validate table name
+        _validate_table_name(cursor, table_name)
 
         # Get all column names first for validation
         all_headers = get_table_columns(sqlite_file, table_name)
