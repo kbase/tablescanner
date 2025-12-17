@@ -21,7 +21,6 @@ def create_app() -> FastAPI:
     Application factory function.
 
     Creates and configures the FastAPI application with:
-    - CORS middleware for browser access
     - Static file serving for viewer.html
     - API routes
 
@@ -34,35 +33,29 @@ def create_app() -> FastAPI:
     import os
     root_path = os.environ.get("KB_SERVICE_ROOT_PATH", "")
     
+
+    description = """
+    ## TableScanner API
+
+    A FastAPI service for querying BERDL table data from KBase.
+
+    ### Features
+    - List pangenomes from BERDLTables objects
+    - List tables within a pangenome
+    - Query table data with filtering, sorting, and pagination
+    - Local caching for performance
+
+    ### Authentication
+    Pass your KBase auth token in the `Authorization` header.
+    """
+
     app = FastAPI(
         title="TableScanner",
         root_path=root_path,
-        description="""
-## TableScanner API
-
-A FastAPI service for querying BERDL table data from KBase.
-
-### Features
-- List pangenomes from BERDLTables objects
-- List tables within a pangenome
-- Query table data with filtering, sorting, and pagination
-- Local caching for performance
-
-### Authentication
-Pass your KBase auth token in the `Authorization` header.
-        """,
+        description=description,
         version="1.0.0",
         docs_url="/docs",
         redoc_url="/redoc",
-    )
-
-    # Enable CORS for browser-based access
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins for development
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
     )
 
     # Store settings in app state for access throughout the application
