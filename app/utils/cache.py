@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 import json
 import time
 import shutil
@@ -46,40 +46,7 @@ def get_upa_cache_path(
     return cache_dir / safe_id
 
 
-def clear_cache(cache_dir: Path, berdl_table_id: str | None = None) -> dict[str, Any]:
-    """
-    Clear cache entries.
-    
-    Args:
-        cache_dir: Base cache directory
-        berdl_table_id: Optional specific object ID to clear
-        
-    Returns:
-        Result summary
-    """
-    try:
-        if berdl_table_id:
-            # Clear specific object
-            target_dir = get_upa_cache_path(cache_dir, berdl_table_id)
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-                logger.info(f"Cleared cache for {berdl_table_id}: {target_dir}")
-                return {"message": f"Cleared cache for {berdl_table_id}"}
-            else:
-                return {"message": f"No cache found for {berdl_table_id}"}
-        else:
-            # Clear entire cache
-            if cache_dir.exists():
-                # Recreate directory to empty it
-                shutil.rmtree(cache_dir)
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                logger.info("Cleared entire cache directory")
-                return {"message": "Cleared all cache"}
-            return {"message": "Cache directory did not exist"}
-            
-    except Exception as e:
-        logger.error(f"Error clearing cache: {e}")
-        raise
+# NOTE: clear_cache was previously defined here but is now unified below.
 
 # Legacy support - to be removed
 def get_cache_paths(
@@ -181,42 +148,7 @@ def get_cache_info(cache_path: Path) -> dict[str, Any] | None:
 # CACHE METADATA
 # =============================================================================
 
-def save_cache_metadata(
-    cache_subdir: Path,
-    berdl_table_id: str,
-    pangenome_id: str,
-    handle_ref: str,
-    **extra
-) -> None:
-    """
-    Save metadata about cached files.
-    
-    Args:
-        cache_subdir: Cache subdirectory for this berdl_table
-        berdl_table_id: Original BERDLTable reference
-        pangenome_id: Pangenome identifier
-        handle_ref: Blobstore handle reference
-        **extra: Additional metadata to store
-    """
-    metadata_path = get_metadata_path(cache_subdir)
-    
-    # Load existing metadata if present
-    if metadata_path.exists():
-        with open(metadata_path) as f:
-            metadata = json.load(f)
-    else:
-        metadata = {"berdl_table_id": berdl_table_id, "pangenomes": {}}
-    
-    # Update pangenome entry
-    metadata["pangenomes"][pangenome_id] = {
-        "handle_ref": handle_ref,
-        "cached_at": datetime.now().isoformat(),
-        **extra
-    }
-    
-    ensure_cache_dir(metadata_path)
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
+
 
 
 def load_cache_metadata(cache_subdir: Path) -> dict[str, Any] | None:

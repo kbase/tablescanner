@@ -422,35 +422,3 @@ def convert_to_sqlite(binary_file: Path, sqlite_file: Path) -> None:
         f"SQLite conversion not implemented for format: {binary_file.suffix}"
     )
 
-
-# =============================================================================
-# CONVERSION (PLACEHOLDER)
-# =============================================================================
-
-def convert_to_sqlite(binary_file: Path, sqlite_file: Path) -> None:
-    """
-    Convert binary file to SQLite database.
-
-    This function handles conversion of various binary formats
-    to SQLite for efficient querying.
-
-    Args:
-        binary_file: Path to binary file
-        sqlite_file: Path to output SQLite file
-
-    Raises:
-        NotImplementedError: Conversion logic depends on binary format
-    """
-    # Check if file is already a SQLite database
-    if binary_file.suffix == '.db':
-        # Just copy/link the file
-        import shutil
-        shutil.copy2(binary_file, sqlite_file)
-        logger.info(f"Copied SQLite database to {sqlite_file}")
-        return
-
-    # TODO: Implement conversion logic based on binary file format
-    # The BERDLTables object stores SQLite directly, so this may not be needed
-    raise NotImplementedError(
-        f"SQLite conversion not implemented for format: {binary_file.suffix}"
-    )

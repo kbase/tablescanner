@@ -3,7 +3,9 @@ import json
 import os
 
 # Set your KBase authentication token
-TOKEN = 'FCJWGTQK2FCE7DGGCSB3ZABP33NDEDDK'
+TOKEN = os.environ.get("KBASE_TOKEN")
+if not TOKEN:
+    raise RuntimeError("KBASE_TOKEN environment variable is not set.")
 HEADERS = {"Authorization": TOKEN}
 BASE_URL = "http://127.0.0.1:8000"
 

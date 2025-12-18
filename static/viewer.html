@@ -538,7 +538,8 @@
                 <div class="col-md-3">
                     <label class="ts-label">BERDLTable ID *</label>
                     <div class="d-flex gap-1">
-                        <input type="text" class="ts-input" id="berdlTableId" value="76990/7/2" placeholder="76990/7/2">
+                        <input type="text" class="ts-input" id="berdlTableId" value="76990/7/2"
+                            placeholder="ws_id/obj_id/version">
                         <button class="ts-btn" id="loadBerdlBtn" title="Load"><i class="bi bi-search"></i></button>
                     </div>
                 </div>
@@ -981,7 +982,7 @@
              * Load tables directly from BERDL ID.
              * Since each BERDLTable object represents one pangenome, we skip the pangenome selection step.
              */
-            async function loadPangenomes() {
+            async function loadBerdlTable() {
                 const berdlIdInput = dom.berdlTableId.value.trim();
 
                 if (!berdlIdInput) { showAlert('Enter BERDLTable ID', 'error'); return; }
@@ -1324,8 +1325,8 @@
             // EVENT HANDLERS
             // =================================================================
             dom.apiUrlSelect.addEventListener('change', updateApiModeLabel);
-            dom.loadBerdlBtn.addEventListener('click', loadPangenomes);
-            dom.berdlTableId.addEventListener('keypress', e => { if (e.key === 'Enter') loadPangenomes(); });
+            dom.loadBerdlBtn.addEventListener('click', loadBerdlTable);
+            dom.berdlTableId.addEventListener('keypress', e => { if (e.key === 'Enter') loadBerdlTable(); });
             dom.tableSelect.addEventListener('change', () => dom.loadDataBtn.disabled = !dom.tableSelect.value);
             dom.loadDataBtn.addEventListener('click', () => loadTableData(false));
             dom.refreshBtn.addEventListener('click', () => loadTableData(true));

@@ -1,9 +1,11 @@
-from __future__ import annotations
+
 import sys
 import logging
 from pathlib import Path
 from typing import Any
 import requests
+from app.utils.cache import get_upa_cache_path
+from uuid import uuid4
 
 # Add KBUtilLib to path
 LIB_PATH = Path(__file__).parent.parent.parent / "lib" / "KBUtilLib" / "src"
@@ -301,7 +303,7 @@ def list_pangenomes_from_object(
     pangenomes = []
     for pg in pangenome_data:
         pangenomes.append({
-            "pangenome_id": pg.get("pangenome_id", ""),
+
             "pangenome_taxonomy": pg.get("pangenome_taxonomy", ""),
             "user_genomes": pg.get("user_genomes", []),
             "berdl_genomes": pg.get("berdl_genomes", []),
@@ -312,35 +314,7 @@ def list_pangenomes_from_object(
     return pangenomes
 
 
-def find_pangenome_handle(
-    berdl_table_id: str,
-    pangenome_id: str,
-    auth_token: str,
-    kb_env: str = "appdev"
-) -> str:
-    """
-    Find the handle_ref for a specific pangenome.
 
-    Args:
-        berdl_table_id: KBase workspace reference  
-        pangenome_id: ID of pangenome to find
-        auth_token: KBase authentication token
-        kb_env: KBase environment
-
-    Returns:
-        Handle reference string (KBH_xxxxx)
-
-    Raises:
-        ValueError: If pangenome not found
-    """
-    pangenomes = list_pangenomes_from_object(berdl_table_id, auth_token, kb_env)
-    
-    for pg in pangenomes:
-        if pg["pangenome_id"] == pangenome_id:
-            return pg["handle_ref"]
-    
-    available = [pg["pangenome_id"] for pg in pangenomes]
-    raise ValueError(f"Pangenome '{pangenome_id}' not found. Available: {available}")
 
 
 def download_pangenome_db(
@@ -352,14 +326,14 @@ def download_pangenome_db(
     """
     Download the SQLite database for a BERDL object.
     
-    Uses UPA-based cache structure: {cache_dir}/{ws}_{obj}_{ver}/tables.db
+    Uses UPA-based cache structure: {cache_dir}/{sanitized_upa}/tables.db, where slashes in the UPA are replaced with underscores.
     
     Implements atomic file operations to prevent race conditions:
     1. Download to temp file with UUID suffix
     2. Atomic rename to final path
     
     Args:
-        berdl_table_id: KBase UPA reference (e.g., "76990/ADP1Test")
+        berdl_table_id: KBase UPA reference (e.g., "76990/7/2")
         auth_token: KBase authentication token
         cache_dir: Local cache directory
         kb_env: KBase environment (appdev, ci, prod)
@@ -367,8 +341,7 @@ def download_pangenome_db(
     Returns:
         Path to the SQLite database file
     """
-    from app.utils.cache import get_upa_cache_path
-    from uuid import uuid4
+
     
     cache_dir = Path(cache_dir)
     db_dir = get_upa_cache_path(cache_dir, berdl_table_id)

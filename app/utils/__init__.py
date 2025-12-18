@@ -11,7 +11,7 @@ Contains business logic for:
 from app.utils.workspace import (
     get_berdl_table_data,
     list_pangenomes_from_object,
-    find_pangenome_handle,
+
     download_pangenome_db,
     get_object_info,
     KBaseClient,
@@ -40,7 +40,7 @@ __all__ = [
     # Workspace utilities
     "get_berdl_table_data",
     "list_pangenomes_from_object",
-    "find_pangenome_handle",
+
     "download_pangenome_db",
     "get_object_info",
     "KBaseClient",

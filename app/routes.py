@@ -11,10 +11,12 @@ REST API Structure (per architecture diagram):
 Also supports legacy endpoints for backwards compatibility.
 """
 
-from __future__ import annotations
+
 import time
 import logging
 from pathlib import Path
+from uuid import uuid4
+from app.utils.workspace import KBaseClient
 
 from fastapi import APIRouter, HTTPException, Header, Query
 
@@ -117,8 +119,6 @@ async def list_tables_by_handle(
         cache_dir = get_cache_dir()
         
         # Download SQLite from handle
-        from app.utils.workspace import KBaseClient
-        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         # Cache path based on handle
@@ -150,7 +150,7 @@ async def list_tables_by_handle(
                     "column_count": len(columns)
                 })
             except Exception as e:
-                logger.warning(f"Error getting info for {name}: {e}")
+                logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name})
         
         return {
@@ -178,8 +178,6 @@ async def get_table_schema_by_handle(
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        from app.utils.workspace import KBaseClient
-        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         safe_handle = handle_ref.replace(":", "_").replace("/", "_")
@@ -243,8 +241,6 @@ async def get_table_data_by_handle(
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        from app.utils.workspace import KBaseClient
-        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         safe_handle = handle_ref.replace(":", "_").replace("/", "_")
@@ -366,7 +362,7 @@ async def list_tables_by_object(
                     "column_count": len(columns)
                 })
             except Exception as e:
-                logger.warning(f"Error getting table info for {name}: {e}")
+                logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name})
         
         return {
