@@ -1,26 +1,8 @@
-"""
-KBase Workspace and Blobstore utilities for retrieving BERDLTables objects.
-
-This module uses KBUtilLib to interact with KBase services for:
-- Fetching BERDLTables objects from Workspace
-- Downloading SQLite databases from Blobstore
-- Caching databases locally
-
-Key Flow:
-1. User provides berdl_table_id (workspace ref like "76990/ADP1Test")
-2. Fetch object from Workspace API via KBUtilLib
-3. Extract pangenome_data with handle_ref
-4. Download SQLite from Blobstore using download_blob_file
-5. Cache locally for efficient repeated queries
-
-Requires: lib/KBUtilLib cloned locally
-"""
-
-import os
+from __future__ import annotations
 import sys
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any
 import requests
 
 # Add KBUtilLib to path
@@ -48,7 +30,7 @@ class KBaseClient:
         self,
         token: str,
         kb_env: str = "appdev",
-        cache_dir: Optional[Path] = None
+        cache_dir: Path | None = None
     ):
         """
         Initialize KBase client.
@@ -95,7 +77,7 @@ class KBaseClient:
             logger.warning(f"KBUtilLib not available: {e}. Using fallback.")
             self._use_kbutillib = False
             
-    def get_object(self, ref: str, ws: Optional[int] = None) -> Dict[str, Any]:
+    def get_object(self, ref: str, ws: int | None = None) -> dict[str, Any]:
         """
         Get workspace object data.
         
@@ -144,7 +126,7 @@ class KBaseClient:
     # FALLBACK METHODS (Direct API calls)
     # =========================================================================
     
-    def _get_endpoints(self) -> Dict[str, str]:
+    def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
         endpoints = {
             "appdev": {
@@ -165,7 +147,7 @@ class KBaseClient:
         }
         return endpoints.get(self.kb_env, endpoints["appdev"])
     
-    def _get_object_fallback(self, ref: str, ws: Optional[int] = None) -> Dict[str, Any]:
+    def _get_object_fallback(self, ref: str, ws: int | None = None) -> dict[str, Any]:
         """Get workspace object via direct API call."""
         # Build reference
         if ws and "/" not in str(ref):
@@ -258,7 +240,7 @@ def get_berdl_table_data(
     berdl_table_id: str,
     auth_token: str,
     kb_env: str = "appdev"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Fetch BERDLTables object and extract pangenome information.
 
@@ -295,7 +277,7 @@ def list_pangenomes_from_object(
     berdl_table_id: str,
     auth_token: str,
     kb_env: str = "appdev"
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     List all pangenomes from a BERDLTables object.
 
@@ -363,67 +345,67 @@ def find_pangenome_handle(
 
 def download_pangenome_db(
     berdl_table_id: str,
-    pangenome_id: Optional[str],
     auth_token: str,
     cache_dir: Path,
     kb_env: str = "appdev"
 ) -> Path:
     """
-    Download the SQLite database for a pangenome.
-    If pangenome_id is None, it is auto-resolved from the BERDL object (1:1 mapping assumed).
-
-    Checks cache first, downloads only if not present.
+    Download the SQLite database for a BERDL object.
+    
+    Uses UPA-based cache structure: {cache_dir}/{ws}_{obj}_{ver}/tables.db
+    
+    Implements atomic file operations to prevent race conditions:
+    1. Download to temp file with UUID suffix
+    2. Atomic rename to final path
+    
+    Args:
+        berdl_table_id: KBase UPA reference (e.g., "76990/ADP1Test")
+        auth_token: KBase authentication token
+        cache_dir: Local cache directory
+        kb_env: KBase environment (appdev, ci, prod)
+        
+    Returns:
+        Path to the SQLite database file
     """
-    from app.utils.cache import is_cached, get_cache_paths
+    from app.utils.cache import get_upa_cache_path
+    from uuid import uuid4
     
     cache_dir = Path(cache_dir)
-    safe_id = berdl_table_id.replace("/", "_").replace(":", "_")
-    db_dir = cache_dir / safe_id
+    db_dir = get_upa_cache_path(cache_dir, berdl_table_id)
+    db_path = db_dir / "tables.db"
     
-    # 1. Resolve ID and Handle if not provided
-    target_id = pangenome_id
-    handle_ref = None
+    # Fast path: return cached file if exists
+    if db_path.exists():
+        logger.info(f"Using cached database: {db_path}")
+        return db_path
     
-    # We always need the ID for the filename.
-    # If pangenome_id is missing, we must fetch the object metadata to get it.
-    # If pangenome_id IS provided, we might still need to fetch object to get the handle (unless cached).
-    
-    # Optimization: If pangenome_id is provided, check if file exists. 
-    # If so, we don't need to fetch metadata.
-    if target_id:
-        db_path = db_dir / f"{target_id}.db"
-        if db_path.exists():
-            logger.info(f"Using cached database: {db_path}")
-            return db_path
-
-    # If not cached or ID unknown, we must fetch metadata
+    # Fetch object metadata to get handle reference
     pangenomes = list_pangenomes_from_object(berdl_table_id, auth_token, kb_env)
     if not pangenomes:
         raise ValueError(f"No pangenomes found in {berdl_table_id}")
-        
-    if target_id:
-        # Verify and find handle
-        found = next((p for p in pangenomes if p["pangenome_id"] == target_id), None)
-        if not found:
-            raise ValueError(f"Pangenome '{target_id}' not found in {berdl_table_id}")
-        handle_ref = found["handle_ref"]
-    else:
-        # Auto-resolve: take the first one
-        found = pangenomes[0]
-        target_id = found["pangenome_id"]
-        handle_ref = found["handle_ref"]
-        
-    # Re-check cache with resolved ID
-    db_path = db_dir / f"{target_id}.db"
-    if db_path.exists():
-        logger.info(f"Using cached database: {db_path} (resolved ID: {target_id})")
-        return db_path
     
-    # Download
-    client = KBaseClient(auth_token, kb_env, cache_dir)
-    db_path = client.download_blob_file(handle_ref, db_path)
+    # Take the first (and only expected) pangenome's handle
+    handle_ref = pangenomes[0]["handle_ref"]
     
-    logger.info(f"Downloaded database to: {db_path}")
+    # Create cache directory
+    db_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Download to temp file to prevent race conditions
+    temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+    
+    try:
+        client = KBaseClient(auth_token, kb_env, cache_dir)
+        client.download_blob_file(handle_ref, temp_path)
+        
+        # Atomic rename to final path
+        temp_path.rename(db_path)
+        logger.info(f"Downloaded database to: {db_path}")
+        
+    except Exception:
+        # Cleanup temp file on failure
+        temp_path.unlink(missing_ok=True)
+        raise
+    
     return db_path
 
 
@@ -431,7 +413,7 @@ def get_object_info(
     object_ref: str,
     auth_token: str,
     kb_env: str = "appdev"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get basic object info without full data.
 
@@ -445,3 +427,4 @@ def get_object_info(
     """
     client = KBaseClient(auth_token, kb_env)
     return client.get_object(object_ref)
+

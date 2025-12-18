@@ -58,6 +58,16 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    # Add CORS middleware to allow cross-origin requests
+    # This is necessary when viewer.html is opened from file:// or different origin
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # Store settings in app state for access throughout the application
     app.state.settings = settings
 

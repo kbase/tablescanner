@@ -538,8 +538,7 @@
                 <div class="col-md-3">
                     <label class="ts-label">BERDLTable ID *</label>
                     <div class="d-flex gap-1">
-                        <input type="text" class="ts-input" id="berdlTableId" value="76990/ADP1Test"
-                            placeholder="ws/obj">
+                        <input type="text" class="ts-input" id="berdlTableId" value="76990/7/2" placeholder="76990/7/2">
                         <button class="ts-btn" id="loadBerdlBtn" title="Load"><i class="bi bi-search"></i></button>
                     </div>
                 </div>
@@ -571,19 +570,13 @@
                 <div class="ts-card">
                     <div class="ts-card-header"><i class="bi bi-collection"></i> Data Selection</div>
                     <div class="row g-2">
-                        <div class="col-4">
-                            <label class="ts-label">Pangenome</label>
-                            <select class="ts-select" id="pangenomeSelect" disabled>
+                        <div class="col-6">
+                            <label class="ts-label">Table</label>
+                            <select class="ts-select" id="tableSelect" disabled>
                                 <option value="">Load BERDLTable first</option>
                             </select>
                         </div>
-                        <div class="col-4">
-                            <label class="ts-label">Table</label>
-                            <select class="ts-select" id="tableSelect" disabled>
-                                <option value="">Select pangenome</option>
-                            </select>
-                        </div>
-                        <div class="col-4">
+                        <div class="col-6">
                             <label class="ts-label">&#160;</label>
                             <div class="d-flex gap-1">
                                 <button class="ts-btn ts-btn-success flex-grow-1" id="loadDataBtn" disabled>
@@ -742,7 +735,6 @@
                 apiModeLabel: $('apiModeLabel'),
                 // kbEnvSelect removed
                 loadBerdlBtn: $('loadBerdlBtn'),
-                pangenomeSelect: $('pangenomeSelect'),
                 tableSelect: $('tableSelect'),
                 loadDataBtn: $('loadDataBtn'),
                 refreshBtn: $('refreshBtn'),
@@ -811,10 +803,7 @@
             }
 
             function getCacheKey() {
-                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
-                const pangenomeId = selectedOption ? selectedOption.value : '';
-                const berdlId = selectedOption ? selectedOption.dataset.berdl : '';
-                return `${berdlId}|${pangenomeId}|${dom.tableSelect.value}`;
+                return `${state.currentBerdlId}|${dom.tableSelect.value}`;
             }
 
             function getHeaders() {
@@ -989,80 +978,34 @@
             // =================================================================
 
             /**
-             * Load pangenomes from BERDLTable object.
-             * Handles auto-selection when only one pangenome exists.
+             * Load tables directly from BERDL ID.
+             * Since each BERDLTable object represents one pangenome, we skip the pangenome selection step.
              */
             async function loadPangenomes() {
                 const berdlIdInput = dom.berdlTableId.value.trim();
 
-                // Allow multiple IDs (split by comma, clean whitespace)
-                // Filter out empty strings
-                const berdlIds = berdlIdInput.split(',').map(s => s.trim()).filter(Boolean);
-
-                if (berdlIds.length === 0) { showAlert('Enter BERDLTable ID(s)', 'error'); return; }
+                if (!berdlIdInput) { showAlert('Enter BERDLTable ID', 'error'); return; }
                 if (!dom.authToken.value) { showAlert('Enter Auth Token', 'error'); return; }
 
-                setStatus('Loading pangenomes...', 'loading');
+                // Store the current BERDL ID for table loading
+                state.currentBerdlId = berdlIdInput;
 
-                try {
-                    const url = new URL(`${getApiUrl()}/pangenomes`);
-                    // Join back with commas for the API call
-                    url.searchParams.set('berdl_table_id', berdlIds.join(','));
-
-                    const res = await fetch(url, { headers: getHeaders() });
-                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-
-                    const data = await res.json();
-                    const pgs = data.pangenomes || [];
-                    const autoSelected = data.auto_selected;
-
-                    // Populate dropdown with group context if multiple IDs used
-                    // Format: "PangenomeID - SourceID"
-                    // VALUE: source_berdl_id (as pangenome_id is now inferred)
-                    dom.pangenomeSelect.innerHTML = pgs.length
-                        ? pgs.map(p => {
-                            const label = `${p.pangenome_id}${p.pangenome_taxonomy ? ' - ' + p.pangenome_taxonomy : ''} [${p.source_berdl_id}]`;
-                            return `<option value="${p.pangenome_id}" data-berdl="${p.source_berdl_id}">${label}</option>`;
-                        }).join('')
-                        : '<option value="">No pangenomes found</option>';
-
-                    dom.pangenomeSelect.disabled = pgs.length === 0;
-                    dom.refreshBtn.disabled = pgs.length === 0;
-
-                    // Auto-select if ONLY one pangenome
-                    // Since value is now source_berdl_id, we need to find it from the data
-                    if (autoSelected) {
-                        // Find the corresponding source_berdl_id for the autoSelected pangenome_id
-                        const target = pgs.find(p => p.pangenome_id === autoSelected);
-                        if (target) {
-                            dom.pangenomeSelect.value = target.pangenome_id;
-                            setStatus(`Auto-selected: ${autoSelected}`, 'success');
-                        }
-                    } else {
-                        // If multiple IDs, just show count
-                        setStatus(`Found ${pgs.length} pangenomes from ${berdlIds.length} source(s)`, 'success');
-                    }
-
-                    if (pgs.length) await loadTables();
-
-                } catch (err) {
-                    setStatus(`Error: ${err.message}`, 'error');
-                    showAlert(err.message, 'error');
-                }
+                setStatus('Loading tables...', 'loading');
+                await loadTables();
             }
 
             async function loadTables() {
-                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
-                if (!selectedOption) return;
-
-                const berdlId = selectedOption.dataset.berdl;
-                if (!berdlId) return;
+                const berdlId = state.currentBerdlId;
+                if (!berdlId) {
+                    showAlert('Load a BERDLTable first', 'error');
+                    return;
+                }
 
                 setStatus('Loading tables...', 'loading');
 
                 try {
-                    const url = new URL(`${getApiUrl()}/tables`);
-                    url.searchParams.set('berdl_table_id', berdlId);
+                    const encodedId = berdlId; // No encoding needed for path parameter with :path
+                    const url = new URL(`${getApiUrl()}/object/${encodedId}/tables`);
 
                     const res = await fetch(url, { headers: getHeaders() });
                     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -1070,20 +1013,23 @@
                     const data = await res.json();
 
                     // Populate table select
-                    dom.tableSelect.innerHTML = data.tables.length
-                        ? data.tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count} rows)</option>`).join('')
-                        : '<option value="">No tables found</option>';
+                    // Populate table select with placeholder
+                    dom.tableSelect.innerHTML = '<option value="">Select a table...</option>' +
+                        (data.tables.length
+                            ? data.tables.map(t => `<option value="${t.name}">${t.name} (${t.row_count} rows)</option>`).join('')
+                            : '');
 
                     dom.tableSelect.disabled = data.tables.length === 0;
 
-                    // Auto-load first table if no specific selection
-                    if (data.tables.length) {
-                        dom.tableSelect.selectedIndex = 0;
-                        await loadTableData();
-                    } else {
+                    if (data.tables.length === 0) {
                         showEmpty();
                     }
-                    setStatus(`Loaded ${data.tables.length} tables`, 'success');
+
+                    // Do NOT auto-load data. Let user choose.
+                    dom.loadDataBtn.disabled = true;
+
+                    const sourceInfo = data.source ? ` [${data.source}]` : '';
+                    setStatus(`Loaded ${data.tables.length} tables${sourceInfo}`, 'success');
 
                 } catch (err) {
                     setStatus(`Error: ${err.message}`, 'error');
@@ -1131,14 +1077,15 @@
 
                 showLoading();
 
-                const selectedOption = dom.pangenomeSelect.options[dom.pangenomeSelect.selectedIndex];
-                const berdlId = selectedOption.dataset.berdl;
-                const pangenomeId = selectedOption.value;
+                const berdlId = state.currentBerdlId;
+                if (!berdlId) {
+                    showAlert('Load a BERDLTable first', 'error');
+                    return;
+                }
 
                 // Construct request based on STATE
                 const body = {
                     berdl_table_id: berdlId,
-                    pangenome_id: pangenomeId,
                     table_name: dom.tableSelect.value,
                     limit: state.pageSize,
                     offset: state.currentPage * state.pageSize,
@@ -1158,10 +1105,24 @@
                 }
 
                 try {
-                    const res = await fetch(`${getApiUrl()}/table-data`, {
-                        method: 'POST',
-                        headers: getHeaders(),
-                        body: JSON.stringify(body)
+                    const encodedId = berdlId;
+                    const tableName = dom.tableSelect.value;
+                    const url = new URL(`${getApiUrl()}/object/${encodedId}/tables/${tableName}/data`);
+
+                    // Add query parameters
+                    url.searchParams.set('limit', state.pageSize);
+                    url.searchParams.set('offset', state.currentPage * state.pageSize);
+                    if (state.sortColumn) {
+                        url.searchParams.set('sort_column', state.sortColumn);
+                        url.searchParams.set('sort_order', state.sortOrder ? state.sortOrder.toUpperCase() : 'ASC');
+                    }
+                    if (state.clientSearch) {
+                        url.searchParams.set('search', state.clientSearch);
+                    }
+
+                    const res = await fetch(url, {
+                        method: 'GET',
+                        headers: getHeaders()
                     });
 
                     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -1365,15 +1326,36 @@
             dom.apiUrlSelect.addEventListener('change', updateApiModeLabel);
             dom.loadBerdlBtn.addEventListener('click', loadPangenomes);
             dom.berdlTableId.addEventListener('keypress', e => { if (e.key === 'Enter') loadPangenomes(); });
-            dom.pangenomeSelect.addEventListener('change', loadTables);
             dom.tableSelect.addEventListener('change', () => dom.loadDataBtn.disabled = !dom.tableSelect.value);
             dom.loadDataBtn.addEventListener('click', () => loadTableData(false));
             dom.refreshBtn.addEventListener('click', () => loadTableData(true));
 
-            dom.clearCacheBtn.addEventListener('click', () => {
-                state.cache.clear();
-                showAlert('Client cache cleared', 'success');
-                setStatus('Cache cleared', 'info');
+            dom.clearCacheBtn.addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to clear the server cache and re-download data?')) return;
+
+                setStatus('Clearing cache...', 'loading');
+                try {
+                    const url = new URL(`${getApiUrl()}/clear-cache`);
+                    if (state.currentBerdlId) {
+                        url.searchParams.set('berdl_table_id', state.currentBerdlId);
+                    }
+
+                    const res = await fetch(url, { method: 'POST', headers: getHeaders() });
+                    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+
+                    state.cache.clear();
+
+                    const msg = state.currentBerdlId
+                        ? `Cache cleared for ${state.currentBerdlId}`
+                        : 'All cache cleared';
+
+                    showAlert(msg, 'success');
+                    setStatus(msg, 'success');
+
+                } catch (err) {
+                    setStatus(`Error clearing cache: ${err.message}`, 'error');
+                    showAlert(err.message, 'error');
+                }
             });
 
             dom.clientSearch.addEventListener('input', debounce(() => {

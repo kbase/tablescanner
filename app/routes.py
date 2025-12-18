@@ -11,16 +11,14 @@ REST API Structure (per architecture diagram):
 Also supports legacy endpoints for backwards compatibility.
 """
 
+from __future__ import annotations
 import time
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Header, Query
-from fastapi.responses import JSONResponse
 
 from app.models import (
-    SearchRequest,
     TableDataRequest,
     TableDataResponse,
     PangenomesResponse,
@@ -31,7 +29,6 @@ from app.models import (
     ServiceStatus,
 )
 from app.utils.workspace import (
-    get_berdl_table_data,
     list_pangenomes_from_object,
     download_pangenome_db,
 )
@@ -45,10 +42,8 @@ from app.utils.sqlite import (
 )
 from app.utils.cache import (
     is_cached,
-    get_cache_paths,
     clear_cache,
     list_cached_items,
-    cleanup_old_caches,
 )
 from app.config import settings
 
@@ -63,7 +58,7 @@ router = APIRouter()
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def get_auth_token(authorization: Optional[str] = None) -> str:
+def get_auth_token(authorization: str | None = None) -> str:
     """Extract auth token from header or settings."""
     if authorization:
         if authorization.startswith("Bearer "):
@@ -110,7 +105,7 @@ async def root():
 async def list_tables_by_handle(
     handle_ref: str,
     kb_env: str = Query("appdev", description="KBase environment"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
     List all tables in a SQLite database accessed via handle reference.
@@ -123,14 +118,24 @@ async def list_tables_by_handle(
         
         # Download SQLite from handle
         from app.utils.workspace import KBaseClient
+        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         # Cache path based on handle
         safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_path = cache_dir / "handles" / f"{safe_handle}.db"
+        db_dir = cache_dir / "handles"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / f"{safe_handle}.db"
         
+        # Atomic download to prevent race conditions
         if not db_path.exists():
-            client.download_blob_file(handle_ref, db_path)
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                raise
         
         # List tables
         table_names = list_tables(db_path)
@@ -164,7 +169,7 @@ async def get_table_schema_by_handle(
     handle_ref: str,
     table_name: str,
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
     Get schema (columns) for a table accessed via handle reference.
@@ -174,13 +179,22 @@ async def get_table_schema_by_handle(
         cache_dir = get_cache_dir()
         
         from app.utils.workspace import KBaseClient
+        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_path = cache_dir / "handles" / f"{safe_handle}.db"
+        db_dir = cache_dir / "handles"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / f"{safe_handle}.db"
         
         if not db_path.exists():
-            client.download_blob_file(handle_ref, db_path)
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                raise
         
         if not validate_table_exists(db_path, table_name):
             available = list_tables(db_path)
@@ -209,11 +223,11 @@ async def get_table_data_by_handle(
     table_name: str,
     limit: int = Query(100, ge=1, le=500000),
     offset: int = Query(0, ge=0),
-    sort_column: Optional[str] = Query(None),
-    sort_order: Optional[str] = Query("ASC"),
-    search: Optional[str] = Query(None, description="Global search term"),
+    sort_column: str | None = Query(None),
+    sort_order: str | None = Query("ASC"),
+    search: str | None = Query(None, description="Global search term"),
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
     Query table data from SQLite via handle reference.
@@ -230,13 +244,22 @@ async def get_table_data_by_handle(
         cache_dir = get_cache_dir()
         
         from app.utils.workspace import KBaseClient
+        from uuid import uuid4
         client = KBaseClient(token, kb_env, cache_dir)
         
         safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_path = cache_dir / "handles" / f"{safe_handle}.db"
+        db_dir = cache_dir / "handles"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / f"{safe_handle}.db"
         
         if not db_path.exists():
-            client.download_blob_file(handle_ref, db_path)
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                raise
         
         if not validate_table_exists(db_path, table_name):
             available = list_tables(db_path)
@@ -281,19 +304,18 @@ async def get_table_data_by_handle(
 # /object/{ws_ref}/pangenomes/{pg_id}/tables/{table}/data - Query data
 # =============================================================================
 
-@router.get("/object/{ws_id}/{obj_name}/pangenomes")
+@router.get("/object/{ws_ref:path}/pangenomes")
 async def list_pangenomes_by_object(
-    ws_id: str,
-    obj_name: str,
+    ws_ref: str,
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
     List pangenomes from a BERDLTables/GenomeDataLakeTables object.
     """
     try:
         token = get_auth_token(authorization)
-        berdl_table_id = f"{ws_id}/{obj_name}"
+        berdl_table_id = ws_ref
         
         pangenomes = list_pangenomes_from_object(
             berdl_table_id=berdl_table_id,
@@ -311,25 +333,22 @@ async def list_pangenomes_by_object(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/object/{ws_id}/{obj_name}/pangenomes/{pangenome_id}/tables")
+@router.get("/object/{ws_ref:path}/tables")
 async def list_tables_by_object(
-    ws_id: str,
-    obj_name: str,
-    pangenome_id: str,
+    ws_ref: str,
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
-    List tables for a specific pangenome within a BERDLTables object.
+    List tables for a BERDLTables object.
     """
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
-        berdl_table_id = f"{ws_id}/{obj_name}"
+        berdl_table_id = ws_ref
         
         db_path = download_pangenome_db(
             berdl_table_id=berdl_table_id,
-            pangenome_id=pangenome_id,
             auth_token=token,
             cache_dir=cache_dir,
             kb_env=kb_env
@@ -347,12 +366,13 @@ async def list_tables_by_object(
                     "column_count": len(columns)
                 })
             except Exception as e:
+                logger.warning(f"Error getting table info for {name}: {e}")
                 tables.append({"name": name})
         
         return {
             "berdl_table_id": berdl_table_id,
-            "pangenome_id": pangenome_id,
-            "tables": tables
+            "tables": tables,
+            "source": "Cache" if (db_path.exists() and db_path.stat().st_size > 0) else "Downloaded"
         }
         
     except Exception as e:
@@ -360,33 +380,30 @@ async def list_tables_by_object(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/object/{ws_id}/{obj_name}/pangenomes/{pangenome_id}/tables/{table_name}/data")
+@router.get("/object/{ws_ref:path}/tables/{table_name}/data")
 async def get_table_data_by_object(
-    ws_id: str,
-    obj_name: str,
-    pangenome_id: str,
+    ws_ref: str,
     table_name: str,
     limit: int = Query(100, ge=1, le=500000),
     offset: int = Query(0, ge=0),
-    sort_column: Optional[str] = Query(None),
-    sort_order: Optional[str] = Query("ASC"),
-    search: Optional[str] = Query(None),
+    sort_column: str | None = Query(None),
+    sort_order: str | None = Query("ASC"),
+    search: str | None = Query(None),
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
-    Query table data from a pangenome within a BERDLTables object.
+    Query table data from a BERDLTables object.
     """
     start_time = time.time()
     
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
-        berdl_table_id = f"{ws_id}/{obj_name}"
+        berdl_table_id = ws_ref
         
         db_path = download_pangenome_db(
             berdl_table_id=berdl_table_id,
-            pangenome_id=pangenome_id,
             auth_token=token,
             cache_dir=cache_dir,
             kb_env=kb_env
@@ -410,7 +427,6 @@ async def get_table_data_by_object(
         
         return {
             "berdl_table_id": berdl_table_id,
-            "pangenome_id": pangenome_id,
             "table_name": table_name,
             "headers": headers,
             "data": data,
@@ -437,7 +453,7 @@ async def get_table_data_by_object(
 async def get_pangenomes(
     berdl_table_id: str = Query(..., description="BERDLTables object reference"),
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """
     List pangenomes from BERDLTables object.
@@ -445,7 +461,6 @@ async def get_pangenomes(
     Returns:
         - pangenomes: List of pangenome info
         - pangenome_count: Total number of pangenomes
-        - auto_selected: The pangenome_id if only one exists (for auto-selection)
     """
     try:
         token = get_auth_token(authorization)
@@ -469,15 +484,9 @@ async def get_pangenomes(
                 
         pangenome_list = [PangenomeInfo(**pg) for pg in all_pangenomes]
         
-        # Auto-select if only one pangenome total
-        auto_selected = None
-        if len(pangenome_list) == 1:
-            auto_selected = pangenome_list[0].pangenome_id
-        
         return PangenomesResponse(
             pangenomes=pangenome_list,
-            pangenome_count=len(pangenome_list),
-            auto_selected=auto_selected
+            pangenome_count=len(pangenome_list)
         )
     except Exception as e:
         logger.error(f"Error in get_pangenomes: {e}")
@@ -487,25 +496,15 @@ async def get_pangenomes(
 @router.get("/tables", response_model=TableListResponse)
 async def get_tables(
     berdl_table_id: str = Query(..., description="BERDLTables object reference"),
-    pangenome_id: Optional[str] = Query(None, description="Legacy parameter (ignored)"),
     kb_env: str = Query("appdev"),
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """List tables for a BERDLTable object (auto-resolves pangenome)."""
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        # 1. Resolve pangenome_id from BERDL ID
-        pangenomes = list_pangenomes_from_object(berdl_table_id, token, kb_env)
-        if not pangenomes:
-            raise HTTPException(status_code=404, detail="No pangenomes found in object")
-            
-        # 1:1 relationship assumed as per user requirement
-        # Always pick the first one associated with this object
-        target_pangenome = pangenomes[0]["pangenome_id"]
-        
-        db_path = download_pangenome_db(berdl_table_id, target_pangenome, token, cache_dir, kb_env)
+        db_path = download_pangenome_db(berdl_table_id, token, cache_dir, kb_env)
         table_names = list_tables(db_path)
         
         tables = []
@@ -514,47 +513,37 @@ async def get_tables(
                 columns = get_table_columns(db_path, name)
                 row_count = get_table_row_count(db_path, name)
                 tables.append(TableInfo(name=name, row_count=row_count, column_count=len(columns)))
-            except:
+            except Exception:
                 tables.append(TableInfo(name=name))
         
-        return TableListResponse(pangenome_id=target_pangenome, tables=tables)
+        return TableListResponse(tables=tables)
     except Exception as e:
         logger.error(f"Error listing tables: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-        
-# Legacy route redirect/alias if needed, but for now we replace logic
-@router.get("/tables/{pangenome_id}", include_in_schema=False)
-async def get_tables_legacy(pangenome_id: str, berdl_table_id: str = Query(...), kb_env: str = Query("appdev"), authorization: Optional[str] = Header(None)):
-    return await get_tables(berdl_table_id=berdl_table_id, pangenome_id=pangenome_id, kb_env=kb_env, authorization=authorization)
 
 
 @router.post("/table-data", response_model=TableDataResponse)
 async def query_table_data(
     request: TableDataRequest,
-    authorization: Optional[str] = Header(None)
+    authorization: str | None = Header(None)
 ):
     """Query table data."""
     start_time = time.time()
     
     try:
-        # Debugging log
-        print(f"Received request: {request} col_filter={request.col_filter}")
-        
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         kb_env = getattr(request, 'kb_env', 'appdev') or 'appdev'
         
         # Determine filters (support both query_filters and col_filter)
         filters = request.col_filter if request.col_filter else request.query_filters
-        print(f"Filters determined: {filters}")
         
         # Download (or get cached) DB - auto-resolves ID if None
         try:
             db_path = download_pangenome_db(
-                request.berdl_table_id, request.pangenome_id, token, cache_dir, kb_env
+                request.berdl_table_id, token, cache_dir, kb_env
             )
         except ValueError as e:
-            # Handle cases where pangenome not found or resolution failed
             raise HTTPException(status_code=404, detail=str(e))
         
         if not validate_table_exists(db_path, request.table_name):
@@ -581,11 +570,6 @@ async def query_table_data(
         
         response_time_ms = (time.time() - start_time) * 1000
         
-        # Extract the resolved pangenome ID from filename if possible, or just return what we have
-        # Since pangenome_id in response model is just for context, we can derive it from db_path
-        # db_path is .../cache/berdl_id/pangenome_id.db
-        resolved_pangenome_id = db_path.stem
-        
         return TableDataResponse(
             headers=headers,
             data=data,
@@ -593,7 +577,6 @@ async def query_table_data(
             total_count=total_count,
             filtered_count=filtered_count,
             table_name=request.table_name,
-            pangenome_id=resolved_pangenome_id,
             response_time_ms=response_time_ms,
             db_query_ms=db_query_ms,
             conversion_ms=conversion_ms,
@@ -615,7 +598,7 @@ async def query_table_data(
 
 @router.post("/clear-cache", response_model=CacheResponse)
 async def clear_pangenome_cache(
-    berdl_table_id: Optional[str] = Query(None)
+    berdl_table_id: str | None = Query(None)
 ):
     """Clear cached databases."""
     try:

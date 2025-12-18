@@ -1,82 +1,11 @@
-"""
-Pydantic models for TableScanner API.
-
-Defines strictly typed request/response schemas for clean /docs output.
-All models use Field with descriptions and examples for documentation.
-"""
-
-from typing import List, Dict, Optional, Any, Literal
+from __future__ import annotations
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
 # =============================================================================
 # REQUEST MODELS
 # =============================================================================
-
-class OrderSpec(BaseModel):
-    """Specification for ordering/sorting query results."""
-    column: str = Field(..., description="Column name to sort by")
-    order: Literal["ASC", "DESC"] = Field(
-        "ASC",
-        description="Sort direction: ASC (ascending) or DESC (descending)"
-    )
-
-
-class FilterSpec(BaseModel):
-    """Specification for column-specific filtering."""
-    column: str = Field(..., description="Column name to filter")
-    value: str = Field(..., description="Filter value (uses LIKE matching)")
-    operator: Literal["LIKE", "=", ">", "<", ">=", "<="] = Field(
-        "LIKE",
-        description="Filter operator"
-    )
-
-
-class SearchRequest(BaseModel):
-    """
-    Request model for /search endpoint.
-    
-    Provides a flexible interface for searching table data with
-    optional filtering, sorting, and pagination.
-    """
-    berdl_table_id: str = Field(
-        ...,
-        description="BERDLTables object reference (e.g., '76990/ADPITest')",
-        examples=["76990/ADPITest"]
-    )
-    table_name: str = Field(
-        ...,
-        description="Name of the table to query",
-        examples=["Genes", "Organisms"]
-    )
-    limit: int = Field(
-        100,
-        ge=1,
-        le=500000,
-        description="Maximum number of rows to return"
-    )
-    offset: int = Field(
-        0,
-        ge=0,
-        description="Number of rows to skip (for pagination)"
-    )
-    search_value: Optional[str] = Field(
-        None,
-        description="Global search term (searches all columns)"
-    )
-    order_by: Optional[List[Dict[str, str]]] = Field(
-        None,
-        description="List of {column, order} dicts for sorting",
-        examples=[[{"column": "gene_name", "order": "ASC"}]]
-    )
-    filters: Optional[List[Dict[str, str]]] = Field(
-        None,
-        description="List of column filters [{column, value}]"
-    )
-    kb_env: str = Field(
-        "appdev",
-        description="KBase environment: appdev, ci, or prod"
-    )
 
 
 class TableDataRequest(BaseModel):
@@ -91,12 +20,12 @@ class TableDataRequest(BaseModel):
         description="BERDLTables object reference",
         examples=["76990/ADPITest"]
     )
-    columns: Optional[str] = Field(
+    columns: str | None = Field(
         "all",
         description="Comma-separated list of columns to select or 'all'",
         examples=["gene_id, gene_name"]
     )
-    col_filter: Optional[Dict[str, str]] = Field(
+    col_filter: dict[str, str] | None = Field(
         None,
         description="Column-specific filters (alias for query_filters)",
         examples=[{"gene_name": "kinase"}]
@@ -117,24 +46,24 @@ class TableDataRequest(BaseModel):
         ge=0,
         description="Offset for pagination"
     )
-    sort_column: Optional[str] = Field(
+    sort_column: str | None = Field(
         None,
         description="Column to sort by"
     )
-    sort_order: Optional[Literal["ASC", "DESC"]] = Field(
+    sort_order: Literal["ASC", "DESC"] | None = Field(
         "ASC",
         description="Sort direction"
     )
-    order_by: Optional[List[Dict[str, str]]] = Field(
+    order_by: list[dict[str, str]] | None = Field(
         None,
         description="Multi-column sort specifications [{'column': 'col_name', 'direction': 'asc'}]",
         examples=[[{"column": "gene_name", "direction": "asc"}, {"column": "score", "direction": "desc"}]]
     )
-    search_value: Optional[str] = Field(
+    search_value: str | None = Field(
         None,
         description="Global search term"
     )
-    query_filters: Optional[Dict[str, str]] = Field(
+    query_filters: dict[str, str] | None = Field(
         None,
         description="Column-specific filters {column_name: filter_value}",
         examples=[{"gene_name": "kinase", "organism": "E. coli"}]
@@ -149,23 +78,19 @@ class TableDataRequest(BaseModel):
 # RESPONSE MODELS
 # =============================================================================
 
-class TableColumn(BaseModel):
-    """Information about a table column."""
-    name: str = Field(..., description="Column name")
-    type: Optional[str] = Field(None, description="Column data type")
+
 
 
 class TableInfo(BaseModel):
     """Information about a database table."""
     name: str = Field(..., description="Table name")
-    row_count: Optional[int] = Field(None, description="Number of rows")
-    column_count: Optional[int] = Field(None, description="Number of columns")
+    row_count: int | None = Field(None, description="Number of rows")
+    column_count: int | None = Field(None, description="Number of columns")
 
 
 class TableListResponse(BaseModel):
-    """Response for listing tables in a pangenome database."""
-#    pangenome_id: str = Field(..., description="Pangenome identifier")
-    tables: List[TableInfo] = Field(
+    """Response for listing tables in a database."""
+    tables: list[TableInfo] = Field(
         default_factory=list,
         description="List of available tables"
     )
@@ -173,19 +98,18 @@ class TableListResponse(BaseModel):
 
 class PangenomeInfo(BaseModel):
     """Information about a pangenome found in the SQLite file."""
-#    pangenome_id: str = Field(..., description="ID of the pangenome")
-    pangenome_taxonomy: Optional[str] = Field(None, description="Taxonomy of the pangenome")
+    pangenome_taxonomy: str | None = Field(None, description="Taxonomy of the pangenome")
     genome_count: int = Field(..., description="Number of genomes in the pangenome")
     source_berdl_id: str = Field(..., description="Source BERDL Table ID")
-    user_genomes: List[str] = Field(
+    user_genomes: list[str] = Field(
         default_factory=list,
         description="List of user-provided genome references"
     )
-    berdl_genomes: List[str] = Field(
+    berdl_genomes: list[str] = Field(
         default_factory=list,
         description="List of BERDL/Datalake genome identifiers"
     )
-    handle_ref: Optional[str] = Field(
+    handle_ref: str | None = Field(
         None,
         description="Blobstore handle reference for SQLite database"
     )
@@ -193,17 +117,13 @@ class PangenomeInfo(BaseModel):
 
 class PangenomesResponse(BaseModel):
     """Response for listing pangenomes from a BERDLTables object."""
-    pangenomes: List[PangenomeInfo] = Field(
+    pangenomes: list[PangenomeInfo] = Field(
         default_factory=list,
         description="List of available pangenomes"
     )
     pangenome_count: int = Field(
         0,
         description="Total number of pangenomes"
-    )
-    auto_selected: Optional[str] = Field(
-        None,
-        description="Auto-selected pangenome ID when only one exists"
     )
 
 
@@ -213,11 +133,11 @@ class TableDataResponse(BaseModel):
     
     Includes the data, metadata, and performance metrics.
     """
-    headers: List[str] = Field(
+    headers: list[str] = Field(
         ...,
         description="Column names in order"
     )
-    data: List[List[str]] = Field(
+    data: list[list[str]] = Field(
         ...,
         description="Row data as list of lists"
     )
@@ -237,31 +157,27 @@ class TableDataResponse(BaseModel):
         ...,
         description="Name of the queried table"
     )
-    pangenome_id: str = Field(
-        ...,
-        description="Pangenome identifier"
-    )
     response_time_ms: float = Field(
         ...,
         description="Total response time in milliseconds"
     )
-    db_query_ms: Optional[float] = Field(
+    db_query_ms: float | None = Field(
         None,
         description="Database query time in milliseconds"
     )
-    conversion_ms: Optional[float] = Field(
+    conversion_ms: float | None = Field(
         None,
         description="Data conversion time in milliseconds"
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         None,
         description="Data source (Cache or Downloaded)"
     )
-    cache_file: Optional[str] = Field(
+    cache_file: str | None = Field(
         None,
         description="Path to cached file"
     )
-    sqlite_file: Optional[str] = Field(
+    sqlite_file: str | None = Field(
         None,
         description="Path to SQLite database"
     )

@@ -1,128 +1,102 @@
 # TableScanner
 
-FastAPI application for table scanning operations with MinIO storage integration.
+**High-Performance Tabular Data Microservice for KBase**
 
-# Local Dev
+TableScanner is a professional-grade FastAPI application designed to provide lightning-fast, filtered, and paginated access to massive datasets stored within KBase. By leveraging local SQLite caching and automatic indexing, it transforms slow object retrievals into instantaneous API responses.
 
+---
+
+## 🚀 Key Features
+
+-   **Instant Queries**: Query millions of rows with sub-second response times.
+-   **Intelligent Caching**: Automatic local caching of KBase blobs for repeated access.
+-   **Dynamic Indexing**: Automatically optimizes database performance on first-access.
+-   **Dual-API Support**: Choose between a flexible **Flat POST** for scripts or a hierarchical **RESTful Path** for web apps.
+-   **Zero Memory Overhead**: Handles massive datasets without loading them into RAM.
+
+---
+
+## 🛠️ Architecture Overview
+
+TableScanner acts as a high-speed bridge between KBase's persistent storage and your application.
+
+1.  **KBase Blobstore**: Raw data is stored as SQLite databases.
+2.  **TableScanner Cache**: Downloads and indexes the database locally.
+3.  **FastAPI Layer**: Provides a clean, modern interface for selective data retrieval.
+
+For a deep dive into the service internals, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## 📖 Quick Start
+
+### 1. Run via Docker (Production)
+
+```bash
+docker compose up --build -d
 ```
+The service will be available at `http://localhost:8000`. 
+Interactive documentation is at `/docs`.
+
+### 2. Local Development
+
+```bash
+# Setup environment
+cp .env.example .env
+# Start dev server
 bash scripts/dev.sh
 ```
 
+---
 
-## Features
+## 🔌 API Usage Styles
 
-- FastAPI web framework
-- Search endpoint accepting ID parameters
-- Docker and Docker Compose support
-- Dependency management with uv
-- MinIO client integration
-- KBUtilLib utilities
+TableScanner provides two primary ways to interact with your data.
 
-## Prerequisites
+### A. Flat POST (Recommended for Scripts)
+Everything you need in a single JSON body. Ideal for Python scripts and complex filters.
 
-- Docker
-- Docker Compose
+```python
+import requests
+payload = {
+    "berdl_table_id": "76990/7/2",
+    "table_name": "Genes",
+    "limit": 100
+}
+response = requests.post("http://localhost:8000/table-data", json=payload)
+```
 
-## Quick Start
+### B. Path-based REST (Recommended for Web Apps)
+Clean, hierarchical URLs that mirror your data structure.
 
-### Using Docker Compose
-
-1. Build and start the application:
 ```bash
-docker compose up --build
+# List all tables in a KBase object
+GET /object/76990/7/2/tables
+
+# Get specific table data
+GET /object/76990/7/2/tables/Genes/data?limit=100
 ```
 
-2. The API will be available at `http://localhost:8000`
+---
 
-3. Access the interactive API documentation at `http://localhost:8000/docs`
+## 📈 Use Cases
 
-### API Endpoints
+-   **High-Throughput Analytics**: Powering large-scale pangenome comparisons.
+-   **Interactive Dashboards**: Real-time filtering for community structure visualizations.
+-   **CLI Tools**: Integrating KBase data into local bioinformatics pipelines.
 
-#### Root Endpoint
-- **URL**: `GET /`
-- **Description**: Returns service information
-- **Response**:
-```json
-{
-  "service": "TableScanner",
-  "version": "1.0.0",
-  "status": "running"
-}
-```
+---
 
-#### Search Endpoint
-- **URL**: `GET /search`
-- **Parameters**: 
-  - `id` (required): The ID to search for
-- **Description**: Searches for a table by ID
-- **Example**: `GET /search?id=12345`
-- **Response**:
-```json
-{
-  "query_id": "12345",
-  "status": "success",
-  "message": "Search completed for ID: 12345"
-}
-```
-
-## Development
+## 👨‍💻 Development
 
 ### Project Structure
-```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py          # FastAPI application factory
-│   └── routes.py        # API route definitions
-├── Dockerfile           # Docker build configuration
-├── docker-compose.yml   # Docker Compose configuration
-├── pyproject.toml       # Python project metadata
-├── requirements.txt     # Python dependencies
-└── README.md
-```
+-   `app/`: Core logic and FastAPI routes.
+-   `app/utils/`: Caching, SQLite, and Workspace integration.
+-   `docs/`: Detailed technical documentation.
+-   `scripts/`: Demo clients and deployment scripts.
 
-### Dependencies
+---
 
-The application requires:
-- `fastapi` - Web framework
-- `uvicorn[standard]` - ASGI server
-- `minio` - MinIO client for object storage
-- `KBUtilLib` - KBase utility library
+## ⚖️ License
 
-### Local Development
-
-To run locally without Docker:
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Run the application:
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## Docker
-
-### Build the Image
-```bash
-docker build -t tablescanner .
-```
-
-### Run the Container
-```bash
-docker run -p 8000:8000 tablescanner
-```
-
-## Health Check
-
-The application includes a health check that verifies the service is running:
-- Endpoint: `GET /`
-- Interval: 30 seconds
-- Timeout: 10 seconds
-- Start period: 40 seconds
-
-## License
-
-See [LICENSE](LICENSE) file for details.
+Distributed under the MIT License. See `LICENSE` for more information.

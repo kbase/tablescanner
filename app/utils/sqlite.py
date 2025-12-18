@@ -1,20 +1,9 @@
-"""
-SQLite utilities for database conversion and querying.
-
-This module provides efficient functions for:
-- Extracting table data from SQLite databases
-- Converting data to 2D array format for JSON serialization
-- Filtering, sorting, and pagination
-- Index optimization for query performance
-
-Migrated from: BERDLTable_conversion_service/db_utils.py
-"""
-
+from __future__ import annotations
 import sqlite3
 import logging
 import time
 from pathlib import Path
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -36,7 +25,7 @@ def _validate_table_name(cursor, table_name: str) -> None:
 # TABLE LISTING & METADATA
 # =============================================================================
 
-def list_tables(db_path: Path) -> List[str]:
+def list_tables(db_path: Path) -> list[str]:
     """
     List all user tables in a SQLite database.
 
@@ -72,7 +61,7 @@ def list_tables(db_path: Path) -> List[str]:
         raise
 
 
-def get_table_columns(db_path: Path, table_name: str) -> List[str]:
+def get_table_columns(db_path: Path, table_name: str) -> list[str]:
     """
     Get column names for a specific table.
 
@@ -191,7 +180,7 @@ def ensure_indices(db_path: Path, table_name: str) -> None:
 # DATA RETRIEVAL - SIMPLE QUERY
 # =============================================================================
 
-def query_sqlite(sqlite_file: Path, query_id: str) -> dict:
+def query_sqlite(sqlite_file: Path, query_id: str) -> dict[str, Any]:
     """
     Query SQLite database by ID. Legacy compatibility function.
 
@@ -218,13 +207,13 @@ def get_table_data(
     table_name: str,
     limit: int = 100,
     offset: int = 0,
-    sort_column: Optional[str] = None,
+    sort_column: str | None = None,
     sort_order: str = "ASC",
-    search_value: Optional[str] = None,
-    query_filters: Optional[Dict[str, str]] = None,
-    columns: Optional[str] = "all",
-    order_by: Optional[List[Dict[str, str]]] = None
-) -> Tuple[List[str], List[Any], int, int, float, float]:
+    search_value: str | None = None,
+    query_filters: dict[str, str] | None = None,
+    columns: str | None = "all",
+    order_by: list[dict[str, str]] | None = None
+) -> tuple[list[str], list[Any], int, int, float, float]:
     """
     Get paginated and filtered data from a table.
     
@@ -399,6 +388,39 @@ def get_table_data(
     except sqlite3.Error as e:
         logger.error(f"Error extracting data from {table_name}: {e}")
         raise
+
+
+# =============================================================================
+# CONVERSION (PLACEHOLDER)
+# =============================================================================
+
+def convert_to_sqlite(binary_file: Path, sqlite_file: Path) -> None:
+    """
+    Convert binary file to SQLite database.
+
+    This function handles conversion of various binary formats
+    to SQLite for efficient querying.
+
+    Args:
+        binary_file: Path to binary file
+        sqlite_file: Path to output SQLite file
+
+    Raises:
+        NotImplementedError: Conversion logic depends on binary format
+    """
+    # Check if file is already a SQLite database
+    if binary_file.suffix == '.db':
+        # Just copy/link the file
+        import shutil
+        shutil.copy2(binary_file, sqlite_file)
+        logger.info(f"Copied SQLite database to {sqlite_file}")
+        return
+
+    # TODO: Implement conversion logic based on binary file format
+    # The BERDLTables object stores SQLite directly, so this may not be needed
+    raise NotImplementedError(
+        f"SQLite conversion not implemented for format: {binary_file.suffix}"
+    )
 
 
 # =============================================================================

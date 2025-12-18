@@ -1,22 +1,10 @@
-"""
-Cache utilities for managing local file caching.
-
-Implements efficient caching for downloaded BERDLTables SQLite databases
-with age-based expiration and cleanup.
-
-Cache Structure:
-    {CACHE_DIR}/
-        {berdl_table_id}/
-            {pangenome_id}.db      # SQLite database
-            metadata.json          # Cache metadata (timestamps, checksums)
-"""
-
+from __future__ import annotations
 import json
 import time
 import shutil
 import logging
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any, List
+from typing import Any
 from datetime import datetime
 
 # Configure module logger
@@ -40,22 +28,66 @@ def sanitize_id(id_string: str) -> str:
     return id_string.replace("/", "_").replace(":", "_").replace(" ", "_")
 
 
+def get_upa_cache_path(
+    cache_dir: Path,
+    berdl_table_id: str
+) -> Path:
+    """
+    Get cache directory for a UPA-based object.
+    
+    Args:
+        cache_dir: Base cache directory
+        berdl_table_id: Object UPA (e.g., "76990/ADP1Test")
+        
+    Returns:
+        Path to the object's cache directory
+    """
+    safe_id = sanitize_id(berdl_table_id)
+    return cache_dir / safe_id
+
+
+def clear_cache(cache_dir: Path, berdl_table_id: str | None = None) -> dict[str, Any]:
+    """
+    Clear cache entries.
+    
+    Args:
+        cache_dir: Base cache directory
+        berdl_table_id: Optional specific object ID to clear
+        
+    Returns:
+        Result summary
+    """
+    try:
+        if berdl_table_id:
+            # Clear specific object
+            target_dir = get_upa_cache_path(cache_dir, berdl_table_id)
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+                logger.info(f"Cleared cache for {berdl_table_id}: {target_dir}")
+                return {"message": f"Cleared cache for {berdl_table_id}"}
+            else:
+                return {"message": f"No cache found for {berdl_table_id}"}
+        else:
+            # Clear entire cache
+            if cache_dir.exists():
+                # Recreate directory to empty it
+                shutil.rmtree(cache_dir)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Cleared entire cache directory")
+                return {"message": "Cleared all cache"}
+            return {"message": "Cache directory did not exist"}
+            
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise
+
+# Legacy support - to be removed
 def get_cache_paths(
     cache_dir: Path,
     berdl_table_id: str,
     pangenome_id: str
-) -> Tuple[Path, Path]:
-    """
-    Get cache file paths for a given BERDLTable and pangenome.
-
-    Args:
-        cache_dir: Base cache directory
-        berdl_table_id: BERDLTables object reference
-        pangenome_id: Pangenome identifier
-
-    Returns:
-        Tuple of (cache_subdir, sqlite_file_path)
-    """
+) -> tuple[Path, Path]:
+    """Deprecated: Use get_upa_cache_path instead."""
     safe_berdl = sanitize_id(berdl_table_id)
     safe_pg = sanitize_id(pangenome_id)
     
@@ -123,7 +155,7 @@ def is_cached(cache_path: Path, max_age_hours: int = 24) -> bool:
     return True
 
 
-def get_cache_info(cache_path: Path) -> Optional[Dict[str, Any]]:
+def get_cache_info(cache_path: Path) -> dict[str, Any] | None:
     """
     Get information about a cached file.
     
@@ -187,7 +219,7 @@ def save_cache_metadata(
         json.dump(metadata, f, indent=2)
 
 
-def load_cache_metadata(cache_subdir: Path) -> Optional[Dict[str, Any]]:
+def load_cache_metadata(cache_subdir: Path) -> dict[str, Any] | None:
     """
     Load cache metadata.
     
@@ -209,7 +241,7 @@ def load_cache_metadata(cache_subdir: Path) -> Optional[Dict[str, Any]]:
 # CACHE CLEANUP
 # =============================================================================
 
-def clear_cache(cache_dir: Path, berdl_table_id: Optional[str] = None) -> Dict[str, Any]:
+def clear_cache(cache_dir: Path, berdl_table_id: str | None = None) -> dict[str, Any]:
     """
     Clear cached files.
     
@@ -255,7 +287,7 @@ def clear_cache(cache_dir: Path, berdl_table_id: Optional[str] = None) -> Dict[s
             }
 
 
-def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> Dict[str, Any]:
+def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> dict[str, Any]:
     """
     Remove cache directories older than max_age_days.
     
@@ -293,7 +325,7 @@ def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> Dict[str, Any]
     }
 
 
-def list_cached_items(cache_dir: Path) -> List[Dict[str, Any]]:
+def list_cached_items(cache_dir: Path) -> list[dict[str, Any]]:
     """
     List all cached BERDLTable items.
     
