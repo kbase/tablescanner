@@ -4,7 +4,7 @@ TableScanner is a high-performance middleware service designed to provide fast, 
 
 ---
 
-## 🏗️ High-Level Architecture
+## High-Level Architecture
 
 ```mermaid
 graph TD
@@ -25,7 +25,7 @@ graph TD
 
 ---
 
-## 💾 Caching Strategy: One DB per UPA
+## Caching Strategy: One DB per UPA
 
 TableScanner employs a strict **one-database-per-object** caching policy. Each KBase object reference (UPA, e.g., `76990/7/2`) is mapped to a unique local directory.
 
@@ -35,7 +35,7 @@ TableScanner employs a strict **one-database-per-object** caching policy. Each K
 
 ---
 
-## 🛡️ Race Condition & Atomic Handling
+## Race Condition and Atomic Handling
 
 To ensure reliability in high-concurrency environments (multiple users requesting the same data simultaneously), TableScanner implements **Atomic File Operations**:
 
@@ -55,7 +55,7 @@ If two requests for the same UPA arrive at the same time:
 
 ---
 
-## ⚡ Performance Optimization: Automatic Indexing
+## Performance Optimization: Automatic Indexing
 
 TableScanner doesn't just store the data; it optimizes it. Upon the **first access** to any table:
 -   The service scans the table schema.
@@ -64,7 +64,7 @@ TableScanner doesn't just store the data; it optimizes it. Upon the **first acce
 
 ---
 
-## 🔄 Data Lifecycle in Detail
+## Data Lifecycle in Detail
 
 1.  **Request**: User provides a KBase UPA and query parameters.
 2.  **Cache Verification**: Service checks if `{sanitized_UPA}/tables.db` exists and is valid.
@@ -77,7 +77,7 @@ TableScanner doesn't just store the data; it optimizes it. Upon the **first acce
 
 ---
 
-## 🛠️ Tech Stack & Key Components
+## Tech Stack and Key Components
 
 -   **FastAPI**: Provides the high-performance async web layer.
 -   **SQLite**: The storage engine for tabular data, chosen for its zero-configuration and high performance with indices.

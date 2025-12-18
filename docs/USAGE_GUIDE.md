@@ -88,7 +88,7 @@ print(f"Retrieved {len(data['data'])} rows.")
 
 ---
 
-## 💡 Pro Tips
+## Pro Tips
 
 ### Multi-Source Search
 The metadata endpoints support comma-separated IDs to aggregate pangenomes across multiple objects.
@@ -102,6 +102,6 @@ The first request for a large dataset may take a few seconds as the service down
 
 ---
 
-## 🖼️ Web Viewer
+## Web Viewer
 Access the interactive viewer at:
-`https://appdev.kbase.us/services/berdl_table_scanner/static/viewer.html`
+`https://appdev.kbase.us/services/berdl_table_scanner/static/viewer.html` # TODO: implement this
