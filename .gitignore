@@ -1,7 +1,6 @@
 trash/
 docs/DEMO_SCRIPT.md
 docs/QUICKSTART.md
-scripts/api_client.py
 
 .DS_Store
 .idea
