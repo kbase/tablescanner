@@ -29,6 +29,7 @@ from app.models import (
     TableInfo,
     CacheResponse,
     ServiceStatus,
+    TableSchemaResponse,
 )
 from app.utils.workspace import (
     list_pangenomes_from_object,
@@ -85,7 +86,7 @@ def get_cache_dir() -> Path:
 # SERVICE STATUS
 # =============================================================================
 
-@router.get("/", response_model=ServiceStatus)
+@router.get("/", response_model=ServiceStatus, tags=["General"])
 async def root():
     """Service health check."""
     return ServiceStatus(
@@ -103,7 +104,7 @@ async def root():
 # /{handle_ref}/tables/{table}/data - Table data with pagination
 # =============================================================================
 
-@router.get("/handle/{handle_ref}/tables")
+@router.get("/handle/{handle_ref}/tables", tags=["Handle Access"], response_model=TableListResponse)
 async def list_tables_by_handle(
     handle_ref: str,
     kb_env: str = Query("appdev", description="KBase environment"),
@@ -112,7 +113,11 @@ async def list_tables_by_handle(
     """
     List all tables in a SQLite database accessed via handle reference.
     
-    The handle_ref is the KBase blobstore handle (e.g., KBH_248028).
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables"
+    ```
     """
     try:
         token = get_auth_token(authorization)
@@ -164,7 +169,7 @@ async def list_tables_by_handle(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/handle/{handle_ref}/tables/{table_name}/schema")
+@router.get("/handle/{handle_ref}/tables/{table_name}/schema", tags=["Handle Access"], response_model=TableSchemaResponse)
 async def get_table_schema_by_handle(
     handle_ref: str,
     table_name: str,
@@ -173,6 +178,12 @@ async def get_table_schema_by_handle(
 ):
     """
     Get schema (columns) for a table accessed via handle reference.
+
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables/Genes/schema"
+    ```
     """
     try:
         token = get_auth_token(authorization)
@@ -215,7 +226,7 @@ async def get_table_schema_by_handle(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/handle/{handle_ref}/tables/{table_name}/data")
+@router.get("/handle/{handle_ref}/tables/{table_name}/data", tags=["Handle Access"], response_model=TableDataResponse)
 async def get_table_data_by_handle(
     handle_ref: str,
     table_name: str,
@@ -230,10 +241,11 @@ async def get_table_data_by_handle(
     """
     Query table data from SQLite via handle reference.
     
-    Supports:
-    - Pagination: limit, offset
-    - Sorting: sort_column, sort_order
-    - Search: global search across all columns
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables/Genes/data?limit=5"
+    ```
     """
     start_time = time.time()
     
@@ -300,7 +312,7 @@ async def get_table_data_by_handle(
 # /object/{ws_ref}/pangenomes/{pg_id}/tables/{table}/data - Query data
 # =============================================================================
 
-@router.get("/object/{ws_ref:path}/pangenomes")
+@router.get("/object/{ws_ref:path}/pangenomes", tags=["Object Access"], response_model=PangenomesResponse)
 async def list_pangenomes_by_object(
     ws_ref: str,
     kb_env: str = Query("appdev"),
@@ -308,6 +320,12 @@ async def list_pangenomes_by_object(
 ):
     """
     List pangenomes from a BERDLTables/GenomeDataLakeTables object.
+
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/pangenomes"
+    ```
     """
     try:
         token = get_auth_token(authorization)
@@ -329,7 +347,7 @@ async def list_pangenomes_by_object(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/object/{ws_ref:path}/tables")
+@router.get("/object/{ws_ref:path}/tables", tags=["Object Access"], response_model=TableListResponse)
 async def list_tables_by_object(
     ws_ref: str,
     kb_env: str = Query("appdev"),
@@ -337,6 +355,12 @@ async def list_tables_by_object(
 ):
     """
     List tables for a BERDLTables object.
+
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
+    ```
     """
     try:
         token = get_auth_token(authorization)
@@ -376,7 +400,7 @@ async def list_tables_by_object(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/object/{ws_ref:path}/tables/{table_name}/data")
+@router.get("/object/{ws_ref:path}/tables/{table_name}/data", tags=["Object Access"], response_model=TableDataResponse)
 async def get_table_data_by_object(
     ws_ref: str,
     table_name: str,
@@ -390,6 +414,12 @@ async def get_table_data_by_object(
 ):
     """
     Query table data from a BERDLTables object.
+
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=5"
+    ```
     """
     start_time = time.time()
     
@@ -445,7 +475,7 @@ async def get_table_data_by_object(
 # LEGACY ENDPOINTS (for backwards compatibility)
 # =============================================================================
 
-@router.get("/pangenomes", response_model=PangenomesResponse)
+@router.get("/pangenomes", response_model=PangenomesResponse, tags=["Legacy"])
 async def get_pangenomes(
     berdl_table_id: str = Query(..., description="BERDLTables object reference"),
     kb_env: str = Query("appdev"),
@@ -489,7 +519,7 @@ async def get_pangenomes(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/tables", response_model=TableListResponse)
+@router.get("/tables", response_model=TableListResponse, tags=["Legacy"])
 async def get_tables(
     berdl_table_id: str = Query(..., description="BERDLTables object reference"),
     kb_env: str = Query("appdev"),
@@ -518,12 +548,25 @@ async def get_tables(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/table-data", response_model=TableDataResponse)
+@router.post("/table-data", response_model=TableDataResponse, tags=["Legacy"])
 async def query_table_data(
     request: TableDataRequest,
     authorization: str | None = Header(None)
 ):
-    """Query table data."""
+    """
+    Query table data using a JSON body. Recommended for programmatic access.
+
+    **Example:**
+    ```bash
+    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
+         -d '{
+               "berdl_table_id": "76990/7/2",
+               "table_name": "Metadata_Conditions",
+               "limit": 5"
+             }' \
+         "https://appdev.kbase.us/services/berdl_table_scanner/table-data"
+    ```
+    """
     start_time = time.time()
     
     try:
@@ -592,7 +635,7 @@ async def query_table_data(
 # CACHE MANAGEMENT
 # =============================================================================
 
-@router.post("/clear-cache", response_model=CacheResponse)
+@router.post("/clear-cache", response_model=CacheResponse, tags=["Cache Management"])
 async def clear_pangenome_cache(
     berdl_table_id: str | None = Query(None)
 ):
@@ -605,7 +648,7 @@ async def clear_pangenome_cache(
         return CacheResponse(status="error", message=str(e))
 
 
-@router.get("/cache")
+@router.get("/cache", tags=["Cache Management"])
 async def list_cache():
     """List cached items."""
     cache_dir = get_cache_dir()

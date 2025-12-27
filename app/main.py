@@ -49,11 +49,35 @@ def create_app() -> FastAPI:
     Pass your KBase auth token in the `Authorization` header.
     """
 
+    tags_metadata = [
+        {
+            "name": "General",
+            "description": "Health check and general service information.",
+        },
+        {
+            "name": "Object Access",
+            "description": "API endpoints for accessing data via KBase workspace object references (UPAs).",
+        },
+        {
+            "name": "Handle Access",
+            "description": "API endpoints for accessing data via Blobstore handle references (KBH_...).",
+        },
+        {
+            "name": "Cache Management",
+            "description": "Operations for managing and inspecting the local SQLite cache.",
+        },
+        {
+            "name": "Legacy",
+            "description": "Older endpoints maintained for backwards compatibility with existing clients.",
+        },
+    ]
+
     app = FastAPI(
         title="TableScanner",
         root_path=root_path,
         description=description,
         version="1.0.0",
+        openapi_tags=tags_metadata,
         docs_url="/docs",
         redoc_url="/redoc",
     )
