@@ -109,6 +109,7 @@ class TableListResponse(BaseModel):
     """Response for listing tables in a database."""
     berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
     handle_ref: str | None = Field(None, description="Blobstore handle reference", examples=["KBH_248028"])
+    object_type: str | None = Field(None, description="KBase object type", examples=["KBaseGeneDataLakes.BERDLTables-1.0"])
     tables: list[TableInfo] = Field(
         default_factory=list,
         description="List of available tables",
@@ -145,6 +146,7 @@ class PangenomeInfo(BaseModel):
 class PangenomesResponse(BaseModel):
     """Response for listing pangenomes from a BERDLTables object."""
     berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
+    object_type: str | None = Field(None, description="KBase object type", examples=["KBaseGeneDataLakes.BERDLTables-1.0"])
     pangenomes: list[PangenomeInfo] = Field(
         default_factory=list,
         description="List of available pangenomes",
@@ -217,6 +219,11 @@ class TableDataResponse(BaseModel):
     sqlite_file: str | None = Field(
         None,
         description="Path to SQLite database"
+    )
+    object_type: str | None = Field(
+        None,
+        description="KBase object type",
+        examples=["KBaseGeneDataLakes.BERDLTables-1.0"]
     )
 
     model_config = {

@@ -83,3 +83,22 @@ TableScanner doesn't just store the data; it optimizes it. Upon the **first acce
 -   **SQLite**: The storage engine for tabular data, chosen for its zero-configuration and high performance with indices.
 -   **KBUtilLib**: Handles complex KBase Workspace and Blobstore interactions.
 -   **UUID-based Temp Storage**: Prevents race conditions during file I/O.
+
+---
+
+## Web Interface Architecture
+
+The **Research Data Explorer** is a production-grade single-file SPA (`static/viewer.html`) designed with a "Scientific Modern" aesthetic.
+
+### 1. Sidebar-First Layout
+To mimic the feel of modern IDEs, navigation is concentrated in a fixed left sidebar. This keeps the "Main Stage" focused on the data grid.
+- **Navigation Flow**: Connection → Pangenome Selection → Table Selection → Data Load.
+
+### 2. Performance-Centric UI
+- **Stateless Interaction**: The UI relies on the backend SQLite engine for all heavy lifting (sorting/filtering).
+- **Sticky CSS Architecture**: Uses `sticky` positioning for both table headers and primary "ID" columns to maintain row context during massive horizontal scrolls.
+- **Search Highlighting**: Uses dynamic CSS regex replacement to highlight search terms without re-rendering the entire DOM.
+
+### 3. Design Tokens
+- **Typography**: Inter (UI) and JetBrains Mono (Data) for maximum legibility.
+- **Visuals**: Vibrant HSL-based color palette for status indicators and high-contrast badges for object types.

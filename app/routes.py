@@ -34,6 +34,7 @@ from app.models import (
 from app.utils.workspace import (
     list_pangenomes_from_object,
     download_pangenome_db,
+    get_object_type,
 )
 from app.utils.sqlite import (
     list_tables,
@@ -389,9 +390,16 @@ async def list_tables_by_object(
                 logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name})
         
+        # Get object type
+        try:
+            object_type = get_object_type(berdl_table_id, token, kb_env)
+        except Exception:
+            object_type = None
+        
         return {
             "berdl_table_id": berdl_table_id,
             "tables": tables,
+            "object_type": object_type,
             "source": "Cache" if (db_path.exists() and db_path.stat().st_size > 0) else "Downloaded"
         }
         
@@ -451,6 +459,12 @@ async def get_table_data_by_object(
         
         response_time_ms = (time.time() - start_time) * 1000
         
+        # Get object type
+        try:
+            object_type = get_object_type(berdl_table_id, token, kb_env)
+        except Exception:
+            object_type = None
+        
         return {
             "berdl_table_id": berdl_table_id,
             "table_name": table_name,
@@ -461,7 +475,8 @@ async def get_table_data_by_object(
             "filtered_count": filtered_count,
             "response_time_ms": response_time_ms,
             "db_query_ms": db_query_ms,
-            "sqlite_file": str(db_path)
+            "sqlite_file": str(db_path),
+            "object_type": object_type
         }
         
     except HTTPException:

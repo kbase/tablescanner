@@ -185,6 +185,73 @@ class KBaseClient:
             raise ValueError(f"No data for: {ref}")
             
         return data_list[0]
+
+    def get_object_with_type(self, ref: str, ws: int | None = None) -> tuple[dict[str, Any], str]:
+        """
+        Get workspace object data along with its type.
+        
+        Args:
+            ref: Object reference or name
+            ws: Workspace ID (optional if ref is full reference)
+            
+        Returns:
+            Tuple of (object_data, object_type)
+            object_type is the full KBase type string (e.g., "KBaseFBA.GenomeDataLakeTables-2.0")
+        """
+        # Build reference
+        if ws and "/" not in str(ref):
+            ref = f"{ws}/{ref}"
+        
+        # First get the object type using get_object_info3
+        object_type = self._get_object_type(ref)
+        
+        # Then get the data using standard method
+        obj_data = self.get_object(ref)
+        
+        return obj_data, object_type
+    
+    def _get_object_type(self, ref: str) -> str:
+        """
+        Get the KBase object type using Workspace.get_object_info3.
+        
+        Args:
+            ref: Object reference
+            
+        Returns:
+            Object type string (e.g., "KBaseFBA.GenomeDataLakeTables-2.0")
+        """
+        headers = {
+            "Authorization": self.token,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "method": "Workspace.get_object_info3",
+            "params": [{"objects": [{"ref": ref}]}],
+            "version": "1.1",
+            "id": "tablescanner-type"
+        }
+        
+        endpoints = self._get_endpoints()
+        response = requests.post(
+            endpoints["workspace"],
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        if "error" in result:
+            logger.warning(f"Error getting object type: {result['error']}")
+            return "Unknown"
+        
+        # get_object_info3 returns: {"result": [{"infos": [[objid, name, type, ...]]}]}
+        infos = result.get("result", [{}])[0].get("infos", [])
+        if infos and infos[0] and len(infos[0]) > 2:
+            return infos[0][2]
+        
+        return "Unknown"
     
     def _download_blob_fallback(self, handle_ref: str, target_path: str) -> str:
         """Download from blobstore via direct API."""
@@ -273,6 +340,27 @@ def get_berdl_table_data(
     if isinstance(obj, dict) and "data" in obj:
         return obj["data"]
     return obj
+
+
+def get_object_type(
+    berdl_table_id: str,
+    auth_token: str,
+    kb_env: str = "appdev"
+) -> str:
+    """
+    Get the KBase object type for a workspace object.
+
+    Args:
+        berdl_table_id: KBase workspace reference (e.g., "76990/7/2")
+        auth_token: KBase authentication token
+        kb_env: KBase environment
+
+    Returns:
+        Object type string (e.g., "KBaseGeneDataLakes.BERDLTables-1.0")
+    """
+    client = KBaseClient(auth_token, kb_env)
+    _, object_type = client.get_object_with_type(berdl_table_id)
+    return object_type
 
 
 def list_pangenomes_from_object(

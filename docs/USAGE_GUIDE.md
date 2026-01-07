@@ -30,6 +30,19 @@ Get a list of all tables found in a KBase object.
 ```bash
 curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
+
+**Response**:
+```json
+{
+    "berdl_table_id": "76990/7/2",
+    "object_type": "KBaseFBA.GenomeDataLakeTables-2.0",
+    "tables": [
+        {"name": "Genes", "row_count": 3356, "column_count": 18},
+        {"name": "Metadata_Conditions", "row_count": 42, "column_count": 12}
+    ],
+    "source": "Cache"
+}
+```
 ```
 
 ### Query Table Data
@@ -47,7 +60,20 @@ Retrieve paginated data from a specific table.
 **Example:**
 ```bash
 curl -H "Authorization: $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=5"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=1"
+
+**Response**:
+```json
+{
+    "headers": ["gene_id", "contig_id", "start", "..."],
+    "data": [["gene_1", "contig_A", "100", "..."]],
+    "row_count": 1,
+    "total_count": 3356,
+    "filtered_count": 3356,
+    "object_type": "KBaseFBA.GenomeDataLakeTables-2.0",
+    "response_time_ms": 12.4
+}
+```
 ```
 
 ---
@@ -83,6 +109,19 @@ payload = {
 response = requests.post(url, json=payload, headers=headers)
 data = response.json()
 
+**Example Response**:
+```json
+{
+    "headers": ["organism", "yield", "..."],
+    "data": [["E. coli", "0.42", "..."]],
+    "row_count": 1,
+    "total_count": 500,
+    "filtered_count": 50,
+    "object_type": "KBaseFBA.GenomeDataLakeTables-2.0",
+    "response_time_ms": 15.6
+}
+```
+
 print(f"Retrieved {len(data['data'])} rows.")
 ```
 
@@ -102,6 +141,20 @@ The first request for a large dataset may take a few seconds as the service down
 
 ---
 
-## Web Viewer
-Access the interactive viewer at:
-`https://appdev.kbase.us/services/berdl_table_scanner/static/viewer.html` # TODO: implement this
+## Web Viewer: Research Data Explorer
+
+The TableScanner interactive viewer is a premium, single-page application built for high-performance research.
+
+### Key Operations
+1. **Connect**: Enter a KBase UPA (e.g. `76990/7/2`) and your Auth Token to load available tables.
+2. **Explore**: Use the IDE-like sidebar to navigate between pangenomes and tables.
+3. **Analyze**: 
+   - **Global Search**: Instantly filters all columns with high-contrast highlighting.
+   - **Density Control**: Toggle between `Compact`, `Default`, and `Comfortable` views.
+   - **Column Management**: Custom visibility toggles for wide datasets.
+4. **Export**: One-click **Export to CSV** for local analysis.
+
+### Visual Architecture
+- **Scientific Modern Theme**: A professional light mode designed for long sessions.
+- **Dynamic Feedback**: Real-time status bar updates with cache performance metrics.
+- **Sticky Layout**: Fixed headers and primary columns ensure context is never lost during scrolling.
