@@ -30,6 +30,8 @@ from app.models import (
     CacheResponse,
     ServiceStatus,
     TableSchemaResponse,
+    ConfigGenerationResponse,
+    ProviderStatusResponse,
 )
 from app.utils.workspace import (
     list_pangenomes_from_object,
@@ -669,3 +671,186 @@ async def list_cache():
     cache_dir = get_cache_dir()
     items = list_cached_items(cache_dir)
     return {"cache_dir": str(cache_dir), "items": items, "total": len(items)}
+
+
+# =============================================================================
+# CONFIG GENERATION ENDPOINTS (AI-Powered Schema Inference)
+# =============================================================================
+
+
+@router.post(
+    "/config/generate/{handle_ref}",
+    response_model=ConfigGenerationResponse,
+    tags=["Config Generation"]
+)
+async def generate_viewer_config(
+    handle_ref: str,
+    force_regenerate: bool = Query(False, description="Skip cache and regenerate"),
+    ai_provider: str = Query("auto", description="AI provider: auto, openai, argo, ollama, rules-only"),
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
+    """
+    Generate a DataTables_Viewer configuration for a SQLite database.
+    
+    This endpoint analyzes the database schema and sample values using
+    AI-powered type inference to generate a viewer-compatible config.
+    
+    **Flow:**
+    1. Download SQLite via handle_ref (uses existing cache)
+    2. Compute database fingerprint
+    3. Check config cache → return if exists (unless force_regenerate)
+    4. Analyze schema and sample values
+    5. Apply rule-based + AI type inference
+    6. Generate viewer-compatible JSON config
+    7. Cache and return
+    
+    **Example:**
+    ```bash
+    curl -X POST -H "Authorization: $KB_TOKEN" \\
+         "http://127.0.0.1:8000/config/generate/KBH_248028"
+    ```
+    """
+    try:
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        
+        # Import config generator
+        from app.services.config_generator import ConfigGenerator
+        
+        # Get database path (using existing handle logic)
+        client = KBaseClient(token, kb_env, cache_dir)
+        
+        safe_handle = handle_ref.replace(":", "_").replace("/", "_")
+        db_dir = cache_dir / "handles"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / f"{safe_handle}.db"
+        
+        # Download if not cached
+        if not db_path.exists():
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+            except Exception:
+                temp_path.unlink(missing_ok=True)
+                raise
+        
+        # Generate config
+        generator = ConfigGenerator()
+        result = generator.generate(
+            db_path=db_path,
+            handle_ref=handle_ref,
+            force_regenerate=force_regenerate,
+            ai_preference=ai_provider,
+        )
+        
+        return ConfigGenerationResponse(
+            status="cached" if result.cache_hit else "generated",
+            fingerprint=result.fingerprint,
+            config_url=f"/config/generated/{result.fingerprint}",
+            config=result.config,
+            tables_analyzed=result.tables_analyzed,
+            columns_inferred=result.columns_inferred,
+            ai_provider_used=result.ai_provider_used,
+            generation_time_ms=result.generation_time_ms,
+            cache_hit=result.cache_hit,
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/config/generated/{fingerprint}", tags=["Config Generation"])
+async def get_generated_config(fingerprint: str):
+    """
+    Retrieve a previously generated configuration by fingerprint.
+    
+    **Example:**
+    ```bash
+    curl "http://127.0.0.1:8000/config/generated/KBH_248028_abc123def456"
+    ```
+    """
+    try:
+        from app.services.fingerprint import DatabaseFingerprint
+        
+        fp = DatabaseFingerprint()
+        config = fp.get_cached_config(fingerprint)
+        
+        if config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Config not found for fingerprint: {fingerprint}"
+            )
+        
+        return config
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/config/providers",
+    response_model=list[ProviderStatusResponse],
+    tags=["Config Generation"]
+)
+async def list_ai_providers():
+    """
+    List available AI providers and their status.
+    
+    Returns the availability and priority of each AI provider.
+    Lower priority numbers indicate higher preference.
+    
+    **Example:**
+    ```bash
+    curl "http://127.0.0.1:8000/config/providers"
+    ```
+    """
+    try:
+        from app.services.ai_provider import list_ai_providers
+        
+        providers = list_ai_providers()
+        return [
+            ProviderStatusResponse(
+                name=p.name,
+                available=p.available,
+                priority=p.priority,
+                error=p.error,
+            )
+            for p in providers
+        ]
+        
+    except Exception as e:
+        logger.error(f"Error listing providers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/config/cached", tags=["Config Generation"])
+async def list_cached_configs():
+    """
+    List all cached generated configurations.
+    
+    **Example:**
+    ```bash
+    curl "http://127.0.0.1:8000/config/cached"
+    ```
+    """
+    try:
+        from app.services.fingerprint import DatabaseFingerprint
+        
+        fp = DatabaseFingerprint()
+        cached = fp.list_cached()
+        
+        return {
+            "configs": cached,
+            "total": len(cached),
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing cached configs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

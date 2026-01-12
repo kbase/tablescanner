@@ -53,6 +53,68 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # AI PROVIDER CONFIGURATION
+    # ==========================================================================
+    AI_PROVIDER: str = Field(
+        default="auto",
+        description="Preferred AI provider: auto, openai, argo, ollama, claude-code, rules-only"
+    )
+    AI_FALLBACK_CHAIN: str = Field(
+        default="openai,argo,ollama,rules-only",
+        description="Comma-separated fallback chain of AI providers"
+    )
+    
+    # OpenAI Configuration
+    OPENAI_API_KEY: str = Field(
+        default="",
+        description="OpenAI API key for schema inference"
+    )
+    OPENAI_MODEL: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model to use for inference"
+    )
+    OPENAI_TEMPERATURE: float = Field(
+        default=0.1,
+        description="Temperature for OpenAI responses (lower = more deterministic)"
+    )
+    
+    # Argo Configuration (ANL internal)
+    ARGO_USER: str = Field(
+        default="",
+        description="ANL Argo gateway username"
+    )
+    ARGO_MODEL: str = Field(
+        default="gpt4o",
+        description="Argo model to use"
+    )
+    ARGO_PROXY_PORT: int = Field(
+        default=1080,
+        description="Argo SOCKS proxy port"
+    )
+    
+    # Ollama Configuration (local LLM)
+    OLLAMA_HOST: str = Field(
+        default="http://localhost:11434",
+        description="Ollama server host URL"
+    )
+    OLLAMA_MODEL: str = Field(
+        default="llama3",
+        description="Ollama model to use"
+    )
+    
+    # Claude Code Configuration
+    CLAUDE_CODE_EXECUTABLE: str = Field(
+        default="claude",
+        description="Path to Claude Code CLI executable"
+    )
+    
+    # Generated Config Storage
+    GENERATED_CONFIG_DIR: str = Field(
+        default="/tmp/tablescanner_configs",
+        description="Directory for storing generated viewer configs"
+    )
+
+    # ==========================================================================
     # APPLICATION SETTINGS
     # ==========================================================================
     DEBUG: bool = Field(

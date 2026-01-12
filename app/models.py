@@ -304,3 +304,46 @@ class ServiceStatus(BaseModel):
         description="Service status"
     )
     cache_dir: str = Field(..., description="Cache directory path")
+
+
+# =============================================================================
+# CONFIG GENERATION MODELS
+# =============================================================================
+
+
+class ColumnInferenceResponse(BaseModel):
+    """AI-inferred column characteristics."""
+    column: str = Field(..., description="Column name")
+    data_type: str = Field(..., description="Inferred data type")
+    display_name: str = Field(..., description="Human-readable display name")
+    categories: list[str] = Field(default_factory=list, description="Category groupings")
+    transform: dict | None = Field(None, description="Rendering transformation")
+    width: str = Field("auto", description="Column width")
+    pin: Literal["left", "right"] | None = Field(None, description="Pin position")
+    sortable: bool = Field(True, description="Enable sorting")
+    filterable: bool = Field(True, description="Enable filtering")
+    copyable: bool = Field(False, description="Show copy button")
+    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Inference confidence")
+    source: Literal["rules", "ai", "hybrid"] = Field("rules", description="Inference source")
+    reasoning: str = Field("", description="Explanation of inference")
+
+
+class ConfigGenerationResponse(BaseModel):
+    """Response from config generation endpoint."""
+    status: Literal["generated", "cached", "error"] = Field(..., description="Generation status")
+    fingerprint: str = Field(..., description="Database fingerprint for caching")
+    config_url: str = Field(..., description="URL to retrieve generated config")
+    config: dict = Field(..., description="Full DataTypeConfig JSON")
+    tables_analyzed: int = Field(..., description="Number of tables analyzed")
+    columns_inferred: int = Field(..., description="Number of columns inferred")
+    ai_provider_used: str | None = Field(None, description="AI provider that was used")
+    generation_time_ms: float = Field(..., description="Time to generate config in ms")
+    cache_hit: bool = Field(..., description="Whether config was from cache")
+
+
+class ProviderStatusResponse(BaseModel):
+    """Status of an AI provider."""
+    name: str = Field(..., description="Provider name")
+    available: bool = Field(..., description="Whether provider is available")
+    priority: int = Field(..., description="Provider priority (lower = higher)")
+    error: str | None = Field(None, description="Error message if unavailable")
