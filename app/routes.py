@@ -358,10 +358,12 @@ async def list_tables_by_object(
 ):
     """
     List tables for a BERDLTables object.
+    
+    Returns table list along with viewer config info (fingerprint/URL if cached).
 
     **Example:**
     ```bash
-    curl -H "Authorization: $KB_TOKEN" \
+    curl -H "Authorization: $KB_TOKEN" \\
          "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
     ```
     """
@@ -379,6 +381,9 @@ async def list_tables_by_object(
         
         table_names = list_tables(db_path)
         tables = []
+        schemas = {}
+        total_rows = 0
+        
         for name in table_names:
             try:
                 columns = get_table_columns(db_path, name)
@@ -388,6 +393,10 @@ async def list_tables_by_object(
                     "row_count": row_count,
                     "column_count": len(columns)
                 })
+                total_rows += row_count or 0
+                
+                # Build schema map
+                schemas[name] = {col: "TEXT" for col in columns}  # Default type
             except Exception as e:
                 logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name})
@@ -398,11 +407,55 @@ async def list_tables_by_object(
         except Exception:
             object_type = None
         
+        # Check for cached viewer config
+        config_fingerprint = None
+        config_url = None
+        has_cached_config = False
+        try:
+            from app.services.fingerprint import DatabaseFingerprint
+            fp_service = DatabaseFingerprint()
+            safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
+            fingerprint = fp_service.compute(db_path)
+            full_fingerprint = f"{safe_ref}_{fingerprint}"
+            
+            if fp_service.is_cached(full_fingerprint):
+                config_fingerprint = full_fingerprint
+                config_url = f"/config/generated/{full_fingerprint}"
+                has_cached_config = True
+        except Exception as e:
+            logger.debug(f"Config fingerprint check: {e}")
+        
+        # Check for builtin fallback config
+        has_builtin_config = False
+        builtin_config_id = None
+        try:
+            from app.configs import has_fallback_config, get_fallback_config_id
+            has_builtin_config = has_fallback_config(object_type)
+            builtin_config_id = get_fallback_config_id(object_type)
+        except Exception as e:
+            logger.debug(f"Fallback config check: {e}")
+        
+        # Get database size
+        database_size = None
+        try:
+            database_size = db_path.stat().st_size if db_path.exists() else None
+        except Exception:
+            pass
+        
         return {
             "berdl_table_id": berdl_table_id,
             "tables": tables,
             "object_type": object_type,
-            "source": "Cache" if (db_path.exists() and db_path.stat().st_size > 0) else "Downloaded"
+            "source": "Cache" if (db_path.exists() and db_path.stat().st_size > 0) else "Downloaded",
+            "config_fingerprint": config_fingerprint,
+            "config_url": config_url,
+            "has_cached_config": has_cached_config,
+            "schemas": schemas,
+            "has_builtin_config": has_builtin_config,
+            "builtin_config_id": builtin_config_id,
+            "database_size_bytes": database_size,
+            "total_rows": total_rows,
+            "api_version": "2.0",
         }
         
     except Exception as e:
@@ -854,3 +907,254 @@ async def list_cached_configs():
         logger.error(f"Error listing cached configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.delete("/config/cached/{fingerprint}", tags=["Config Generation"])
+async def delete_cached_config(fingerprint: str):
+    """
+    Delete a specific cached configuration.
+    
+    Use this to invalidate a cached config and force regeneration on next request.
+    
+    **Example:**
+    ```bash
+    curl -X DELETE "http://127.0.0.1:8000/config/cached/76990_7_2_abc123"
+    ```
+    """
+    try:
+        from app.services.fingerprint import DatabaseFingerprint
+        
+        fp = DatabaseFingerprint()
+        deleted = fp.clear_cache(fingerprint)
+        
+        if deleted > 0:
+            return {"status": "success", "message": f"Deleted config: {fingerprint}"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Config not found: {fingerprint}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/object/{ws_ref:path}/config/generate",
+    response_model=ConfigGenerationResponse,
+    tags=["Config Generation"]
+)
+async def generate_config_for_object(
+    ws_ref: str,
+    force_regenerate: bool = Query(False, description="Skip cache and regenerate"),
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
+    """
+    Generate a DataTables_Viewer configuration for a KBase object.
+    
+    This is the object-based alternative to the handle-based config generation.
+    It downloads the SQLite database from the workspace object and generates
+    an AI-powered viewer configuration.
+    
+    **Flow:**
+    1. Download SQLite from workspace object (uses existing cache)
+    2. Compute database fingerprint
+    3. Check config cache → return if exists (unless force_regenerate)
+    4. Analyze schema and sample values
+    5. Apply rule-based + Argo AI type inference
+    6. Validate and cache generated config
+    7. Return
+    
+    **Example:**
+    ```bash
+    curl -X POST -H "Authorization: $KB_TOKEN" \\
+         "http://127.0.0.1:8000/object/76990/7/2/config/generate"
+    ```
+    """
+    try:
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Download database
+        db_path = download_pangenome_db(
+            berdl_table_id=berdl_table_id,
+            auth_token=token,
+            cache_dir=cache_dir,
+            kb_env=kb_env
+        )
+        
+        # Get object type for config metadata
+        try:
+            object_type = get_object_type(berdl_table_id, token, kb_env)
+        except Exception:
+            object_type = None
+        
+        # Generate config
+        from app.services.config_generator import ConfigGenerator
+        
+        generator = ConfigGenerator()
+        
+        # Build schema info for response
+        schema = {}
+        table_schemas = {}
+        total_rows = 0
+        try:
+            table_names = list_tables(db_path)
+            for tbl in table_names:
+                cols = get_table_columns(db_path, tbl)
+                schema[tbl] = {c: "TEXT" for c in cols}
+                total_rows += get_table_row_count(db_path, tbl) or 0
+        except Exception as e:
+            logger.warning(f"Error building schema: {e}")
+        
+        # Try AI generation with fallback cascade
+        fallback_used = False
+        fallback_reason = None
+        config_source = "rules"
+        ai_error = None
+        ai_available = True
+        
+        try:
+            result = generator.generate(
+                db_path=db_path,
+                handle_ref=berdl_table_id,
+                force_regenerate=force_regenerate,
+                ai_preference="argo",  # Argo-only strategy
+            )
+            config_source = "ai" if result.ai_provider_used else "rules"
+            
+        except Exception as gen_error:
+            logger.warning(f"Config generation failed, trying fallback: {gen_error}")
+            ai_error = str(gen_error)
+            ai_available = False
+            
+            # Try builtin fallback
+            from app.configs import get_fallback_config, get_fallback_config_id
+            fallback_config = get_fallback_config(object_type)
+            
+            if fallback_config:
+                fallback_used = True
+                fallback_reason = "generation_failed"
+                config_source = "builtin"
+                
+                # Create mock result
+                from dataclasses import dataclass
+                @dataclass
+                class MockResult:
+                    config: dict
+                    fingerprint: str
+                    cache_hit: bool = False
+                    tables_analyzed: int = 0
+                    columns_inferred: int = 0
+                    ai_provider_used: str | None = None
+                    generation_time_ms: float = 0.0
+                
+                safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
+                result = MockResult(
+                    config=fallback_config,
+                    fingerprint=f"{safe_ref}_fallback_{get_fallback_config_id(object_type)}",
+                )
+            else:
+                # No fallback available - return error
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Config generation failed and no fallback available: {gen_error}"
+                )
+        
+        # Add object type to config if available
+        if object_type and "objectType" not in result.config:
+            result.config["objectType"] = object_type
+        
+        # Determine status
+        if fallback_used:
+            status = "fallback"
+        elif result.cache_hit:
+            status = "cached"
+        else:
+            status = "generated"
+        
+        return ConfigGenerationResponse(
+            status=status,
+            fingerprint=result.fingerprint,
+            config_url=f"/config/generated/{result.fingerprint}",
+            config=result.config,
+            fallback_used=fallback_used,
+            fallback_reason=fallback_reason,
+            config_source=config_source,
+            db_schema=schema if schema else None,
+            table_schemas=table_schemas if table_schemas else None,
+            tables_analyzed=result.tables_analyzed,
+            columns_inferred=result.columns_inferred,
+            total_rows=total_rows,
+            ai_provider_used=result.ai_provider_used,
+            ai_available=ai_available,
+            ai_error=ai_error,
+            generation_time_ms=result.generation_time_ms,
+            cache_hit=result.cache_hit,
+            object_type=object_type,
+            object_ref=berdl_table_id,
+            api_version="2.0",
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating config for object: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/object/{ws_ref:path}/config", tags=["Config Generation"])
+async def get_config_for_object(
+    ws_ref: str,
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
+    """
+    Get cached viewer config for a KBase object.
+    
+    Returns 404 if no config has been generated yet. Use the
+    POST /object/{ws_ref}/config/generate endpoint to create one.
+    
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \\
+         "http://127.0.0.1:8000/object/76990/7/2/config"
+    ```
+    """
+    try:
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Download database (needed for fingerprint computation)
+        db_path = download_pangenome_db(
+            berdl_table_id=berdl_table_id,
+            auth_token=token,
+            cache_dir=cache_dir,
+            kb_env=kb_env
+        )
+        
+        # Compute fingerprint and check cache
+        from app.services.fingerprint import DatabaseFingerprint
+        
+        fp_service = DatabaseFingerprint()
+        safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
+        schema_fp = fp_service.compute(db_path)
+        fingerprint = f"{safe_ref}_{schema_fp}"
+        
+        config = fp_service.get_cached_config(fingerprint)
+        
+        if config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cached config for object {ws_ref}. Use POST /object/{ws_ref}/config/generate to create one."
+            )
+        
+        return config
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting config for object: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

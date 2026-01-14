@@ -119,6 +119,54 @@ class TableListResponse(BaseModel):
         ]]
     )
     source: str | None = Field(None, description="Data source", examples=["Cache"])
+    
+    # Viewer integration fields
+    config_fingerprint: str | None = Field(
+        None, 
+        description="Fingerprint of cached viewer config (if exists)",
+        examples=["v1_auto_abc123def456"]
+    )
+    config_url: str | None = Field(
+        None,
+        description="URL to retrieve generated viewer config",
+        examples=["/config/generated/v1_auto_abc123def456"]
+    )
+    has_cached_config: bool = Field(
+        False,
+        description="Whether a viewer config is cached for this database"
+    )
+    
+    # Schema information for immediate viewer use
+    schemas: dict | None = Field(
+        None,
+        description="Column types per table: {table_name: {column: sql_type}}"
+    )
+    
+    # Fallback config availability
+    has_builtin_config: bool = Field(
+        False,
+        description="Whether a built-in fallback config exists for this object type"
+    )
+    builtin_config_id: str | None = Field(
+        None,
+        description="ID of the matching built-in config"
+    )
+    
+    # Database metadata
+    database_size_bytes: int | None = Field(
+        None,
+        description="Size of the SQLite database file in bytes"
+    )
+    total_rows: int = Field(
+        0,
+        description="Total rows across all tables"
+    )
+    
+    # Versioning for backward compatibility
+    api_version: str = Field(
+        "2.0",
+        description="API version for response format compatibility"
+    )
 
 
 class PangenomeInfo(BaseModel):
@@ -330,15 +378,60 @@ class ColumnInferenceResponse(BaseModel):
 
 class ConfigGenerationResponse(BaseModel):
     """Response from config generation endpoint."""
-    status: Literal["generated", "cached", "error"] = Field(..., description="Generation status")
+    # Core fields
+    status: Literal["generated", "cached", "fallback", "error"] = Field(
+        ..., 
+        description="Generation status: generated (new), cached (from cache), fallback (builtin), error"
+    )
     fingerprint: str = Field(..., description="Database fingerprint for caching")
     config_url: str = Field(..., description="URL to retrieve generated config")
     config: dict = Field(..., description="Full DataTypeConfig JSON")
+    
+    # Fallback metadata
+    fallback_used: bool = Field(
+        False,
+        description="Whether a fallback config was used instead of AI generation"
+    )
+    fallback_reason: str | None = Field(
+        None,
+        description="Reason for fallback: ai_unavailable, generation_failed, object_type_matched"
+    )
+    config_source: Literal["ai", "rules", "cache", "builtin", "error"] = Field(
+        "rules",
+        description="Source of the configuration"
+    )
+    
+    # Schema information (viewer can use directly)
+    db_schema: dict | None = Field(
+        None,
+        alias="schema",
+        description="Simple schema: {table_name: {column: type}}"
+    )
+    table_schemas: dict | None = Field(
+        None,
+        description="Full PRAGMA table_info per table"
+    )
+    
+    # Statistics
     tables_analyzed: int = Field(..., description="Number of tables analyzed")
     columns_inferred: int = Field(..., description="Number of columns inferred")
+    total_rows: int = Field(0, description="Total rows across all tables")
+    
+    # AI provider info
     ai_provider_used: str | None = Field(None, description="AI provider that was used")
+    ai_available: bool = Field(True, description="Whether AI was available")
+    ai_error: str | None = Field(None, description="Error message if AI failed")
+    
+    # Performance
     generation_time_ms: float = Field(..., description="Time to generate config in ms")
     cache_hit: bool = Field(..., description="Whether config was from cache")
+    
+    # Object metadata
+    object_type: str | None = Field(None, description="KBase object type")
+    object_ref: str | None = Field(None, description="Object reference (ws/obj/ver)")
+    
+    # Versioning
+    api_version: str = Field("2.0", description="API version for compatibility")
 
 
 class ProviderStatusResponse(BaseModel):

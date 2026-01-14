@@ -23,6 +23,8 @@ from .ai_provider import (
 )
 from .fingerprint import DatabaseFingerprint
 from .config_generator import ConfigGenerator, GenerationResult
+from .prompts import build_table_config_prompt, detect_value_patterns, compute_numeric_stats
+from .validation import validate_config, validate_table_config, validate_ai_response, sanitize_config
 
 __all__ = [
     # Type inference
@@ -45,4 +47,13 @@ __all__ = [
     # Config generation
     "ConfigGenerator",
     "GenerationResult",
+    # Prompts
+    "build_table_config_prompt",
+    "detect_value_patterns",
+    "compute_numeric_stats",
+    # Validation
+    "validate_config",
+    "validate_table_config",
+    "validate_ai_response",
+    "sanitize_config",
 ]

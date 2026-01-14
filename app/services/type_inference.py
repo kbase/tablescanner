@@ -92,6 +92,27 @@ NAME_PATTERNS: list[tuple[re.Pattern, dict[str, Any]]] = [
         "width": "130px",
     }),
     
+    # UniRef IDs - need chain transformer to strip prefix
+    (re.compile(r"^uniref_\d+$|^UniRef_\d+$|^uniref\d+$"), {
+        "data_type": DataType.ID,
+        "categories": ["external"],
+        "copyable": True,
+        "width": "140px",
+        "transform": TransformConfig(
+            type="chain",
+            options={
+                "transforms": [
+                    {"type": "replace", "options": {"find": "UniRef:", "replace": ""}},
+                    {"type": "link", "options": {
+                        "urlTemplate": "https://www.uniprot.org/uniref/{value}",
+                        "target": "_blank",
+                        "icon": "bi-link-45deg"
+                    }}
+                ]
+            }
+        ),
+    }),
+    
     # External database references with link transforms
     (re.compile(r"^Uniprot.*|^uniprot.*|.*UniProt.*"), {
         "data_type": DataType.ID,
@@ -128,6 +149,59 @@ NAME_PATTERNS: list[tuple[re.Pattern, dict[str, Any]]] = [
                 "prefix": "GO",
                 "urlTemplate": "https://amigo.geneontology.org/amigo/term/{value}",
                 "style": "badge"
+            }
+        ),
+    }),
+    
+    # Pfam domain IDs
+    (re.compile(r"^pfam.*|^Pfam.*|^PF\d+"), {
+        "data_type": DataType.ID,
+        "categories": ["ontology"],
+        "width": "100px",
+        "transform": TransformConfig(
+            type="chain",
+            options={
+                "transforms": [
+                    {"type": "replace", "options": {"find": "pfam:", "replace": ""}},
+                    {"type": "link", "options": {
+                        "urlTemplate": "https://www.ebi.ac.uk/interpro/entry/pfam/{value}",
+                        "target": "_blank",
+                        "icon": "bi-link-45deg"
+                    }}
+                ]
+            }
+        ),
+    }),
+    
+    # NCBI protein IDs (RefSeq)
+    (re.compile(r"^ncbi.*|.*_ncbi.*|^NP_.*|^WP_.*|^XP_.*"), {
+        "data_type": DataType.ID,
+        "categories": ["external"],
+        "copyable": True,
+        "width": "120px",
+        "transform": TransformConfig(
+            type="link",
+            options={
+                "urlTemplate": "https://www.ncbi.nlm.nih.gov/protein/{value}",
+                "target": "_blank",
+                "icon": "bi-link-45deg"
+            }
+        ),
+    }),
+    
+    # Strand indicator (+/-)
+    (re.compile(r"^strand$|^Strand$|.*_strand$"), {
+        "data_type": DataType.STRING,
+        "categories": ["core"],
+        "width": "80px",
+        "transform": TransformConfig(
+            type="badge",
+            options={
+                "colorMap": {
+                    "+": {"color": "#22c55e", "bgColor": "#dcfce7"},
+                    "-": {"color": "#ef4444", "bgColor": "#fee2e2"},
+                    ".": {"color": "#94a3b8", "bgColor": "#f1f5f9"}
+                }
             }
         ),
     }),
