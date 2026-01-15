@@ -172,7 +172,7 @@ class KBaseClient:
             endpoints["workspace"],
             json=payload,
             headers=headers,
-            timeout=60
+            timeout=30  # Reduced from 60 to fail faster
         )
         response.raise_for_status()
         result = response.json()

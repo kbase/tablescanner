@@ -129,8 +129,13 @@ async def health_check():
     from datetime import datetime
     
     try:
-        pool = get_connection_pool()
-        cache_stats = pool.get_stats()
+        # Get connection pool stats (non-blocking)
+        try:
+            pool = get_connection_pool()
+            cache_stats = pool.get_stats()
+        except Exception as pool_error:
+            logger.warning(f"Error getting pool stats: {pool_error}")
+            cache_stats = {"total_connections": 0, "connections": []}
         
         return HealthResponse(
             status="ok",
@@ -139,8 +144,8 @@ async def health_check():
             data_dir=str(settings.CACHE_DIR),
             config_dir=str(Path(settings.CACHE_DIR) / "configs"),
             cache={
-                "databases_cached": cache_stats["total_connections"],
-                "databases": cache_stats["connections"]
+                "databases_cached": cache_stats.get("total_connections", 0),
+                "databases": cache_stats.get("connections", [])
             }
         )
     except Exception as e:
@@ -416,19 +421,78 @@ async def list_tables_by_object(
          "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
     ```
     """
+    import asyncio
+    
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
-        db_path = download_pangenome_db(
-            berdl_table_id=berdl_table_id,
-            auth_token=token,
-            cache_dir=cache_dir,
-            kb_env=kb_env
-        )
+        # Check cache first to avoid blocking KBase calls
+        from app.utils.cache import get_upa_cache_path
+        cache_dir_path = Path(cache_dir)
+        db_dir = get_upa_cache_path(cache_dir_path, berdl_table_id)
+        db_path = db_dir / "tables.db"
         
-        table_names = list_tables(db_path)
+        # If not cached, download in thread pool to avoid blocking
+        if not db_path.exists():
+            try:
+                # Run blocking download in thread pool with timeout
+                import asyncio
+                try:
+                    # Use to_thread if available (Python 3.9+)
+                    if hasattr(asyncio, 'to_thread'):
+                        db_path = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                download_pangenome_db,
+                                berdl_table_id,
+                                token,
+                                cache_dir,
+                                kb_env
+                            ),
+                            timeout=30.0  # 30 second timeout for download
+                        )
+                    else:
+                        # Fallback for older Python
+                        loop = asyncio.get_event_loop()
+                        db_path = await asyncio.wait_for(
+                            loop.run_in_executor(
+                                None,
+                                download_pangenome_db,
+                                berdl_table_id,
+                                token,
+                                cache_dir,
+                                kb_env
+                            ),
+                            timeout=30.0
+                        )
+                except asyncio.TimeoutError:
+                    logger.error(f"Database download timed out for {berdl_table_id}")
+                    raise HTTPException(
+                        status_code=504,
+                        detail=f"Database download timed out. Please try again later or ensure the database is cached."
+                    )
+            except asyncio.TimeoutError:
+                logger.error(f"Database download timed out for {berdl_table_id}")
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Database download timed out. Please try again later or ensure the database is cached."
+                )
+            except Exception as e:
+                logger.error(f"Error downloading database: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to access database. Error: {str(e)}"
+                )
+        
+        # Run table listing in thread pool to avoid blocking
+        import asyncio
+        if hasattr(asyncio, 'to_thread'):
+            table_names = await asyncio.to_thread(list_tables, db_path)
+        else:
+            loop = asyncio.get_event_loop()
+            table_names = await loop.run_in_executor(None, list_tables, db_path)
+        
         tables = []
         schemas = {}
         total_rows = 0
@@ -436,10 +500,16 @@ async def list_tables_by_object(
         # Use schema service for better column type information
         schema_service = get_schema_service()
         
+        # Process tables (these are fast SQLite operations, but run in thread pool for consistency)
         for name in table_names:
             try:
-                columns = get_table_columns(db_path, name)
-                row_count = get_table_row_count(db_path, name)
+                if hasattr(asyncio, 'to_thread'):
+                    columns = await asyncio.to_thread(get_table_columns, db_path, name)
+                    row_count = await asyncio.to_thread(get_table_row_count, db_path, name)
+                else:
+                    loop = asyncio.get_event_loop()
+                    columns = await loop.run_in_executor(None, get_table_columns, db_path, name)
+                    row_count = await loop.run_in_executor(None, get_table_row_count, db_path, name)
                 
                 # Get display name (use table name as default)
                 display_name = name.replace("_", " ").title()
@@ -454,7 +524,15 @@ async def list_tables_by_object(
                 
                 # Build schema map with actual types
                 try:
-                    table_schema = schema_service.get_table_schema(db_path, name)
+                    if hasattr(asyncio, 'to_thread'):
+                        table_schema = await asyncio.to_thread(
+                            schema_service.get_table_schema, db_path, name
+                        )
+                    else:
+                        loop = asyncio.get_event_loop()
+                        table_schema = await loop.run_in_executor(
+                            None, schema_service.get_table_schema, db_path, name
+                        )
                     schemas[name] = {
                         col["name"]: col["type"]
                         for col in table_schema["columns"]
@@ -466,10 +544,34 @@ async def list_tables_by_object(
                 logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name, "displayName": name})
         
-        # Get object type
+        # Get object type (non-blocking, don't fail if this times out)
+        object_type = None
         try:
-            object_type = get_object_type(berdl_table_id, token, kb_env)
-        except Exception:
+            # Run in thread pool with timeout
+            if hasattr(asyncio, 'to_thread'):
+                object_type = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_object_type,
+                        berdl_table_id,
+                        token,
+                        kb_env
+                    ),
+                    timeout=5.0  # 5 second timeout
+                )
+            else:
+                loop = asyncio.get_event_loop()
+                object_type = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        get_object_type,
+                        berdl_table_id,
+                        token,
+                        kb_env
+                    ),
+                    timeout=5.0
+                )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Could not get object type (non-critical): {e}")
             object_type = None
         
         # Config-related fields (deprecated, kept for backward compatibility)
@@ -533,6 +635,8 @@ async def get_table_data_by_object(
          "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=5"
     ```
     """
+    import asyncio
+    
     start_time = time.time()
     
     try:
@@ -540,33 +644,94 @@ async def get_table_data_by_object(
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
-        db_path = download_pangenome_db(
-            berdl_table_id=berdl_table_id,
-            auth_token=token,
-            cache_dir=cache_dir,
-            kb_env=kb_env
-        )
+        # Check cache first
+        from app.utils.cache import get_upa_cache_path
+        cache_dir_path = Path(cache_dir)
+        db_dir = get_upa_cache_path(cache_dir_path, berdl_table_id)
+        db_path = db_dir / "tables.db"
         
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
+        # If not cached, download in thread pool
+        if not db_path.exists():
+            try:
+                loop = asyncio.get_event_loop()
+                db_path = await loop.run_in_executor(
+                    None,
+                    download_pangenome_db,
+                    berdl_table_id,
+                    token,
+                    cache_dir,
+                    kb_env
+                )
+            except Exception as e:
+                logger.error(f"Error downloading database: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to access database. Error: {str(e)}"
+                )
+        
+        # Validate table exists (run in thread pool)
+        import asyncio
+        if hasattr(asyncio, 'to_thread'):
+            table_exists = await asyncio.to_thread(validate_table_exists, db_path, table_name)
+        else:
+            loop = asyncio.get_event_loop()
+            table_exists = await loop.run_in_executor(None, validate_table_exists, db_path, table_name)
+        
+        if not table_exists:
+            if hasattr(asyncio, 'to_thread'):
+                available = await asyncio.to_thread(list_tables, db_path)
+            else:
+                loop = asyncio.get_event_loop()
+                available = await loop.run_in_executor(None, list_tables, db_path)
             raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
         
-        headers, data, total_count, filtered_count, db_query_ms, conversion_ms = get_table_data(
-            sqlite_file=db_path,
-            table_name=table_name,
-            limit=limit,
-            offset=offset,
-            sort_column=sort_column,
-            sort_order=sort_order,
-            search_value=search,
-        )
+        # Query data (run in thread pool)
+        def run_query():
+            return get_table_data(
+                sqlite_file=db_path,
+                table_name=table_name,
+                limit=limit,
+                offset=offset,
+                sort_column=sort_column,
+                sort_order=sort_order,
+                search_value=search,
+            )
+        
+        if hasattr(asyncio, 'to_thread'):
+            query_result = await asyncio.to_thread(run_query)
+        else:
+            loop = asyncio.get_event_loop()
+            query_result = await loop.run_in_executor(None, run_query)
+        headers, data, total_count, filtered_count, db_query_ms, conversion_ms = query_result
         
         response_time_ms = (time.time() - start_time) * 1000
         
-        # Get object type
+        # Get object type (non-blocking)
+        object_type = None
         try:
-            object_type = get_object_type(berdl_table_id, token, kb_env)
-        except Exception:
+            if hasattr(asyncio, 'to_thread'):
+                object_type = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_object_type,
+                        berdl_table_id,
+                        token,
+                        kb_env
+                    ),
+                    timeout=5.0
+                )
+            else:
+                loop = asyncio.get_event_loop()
+                object_type = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        get_object_type,
+                        berdl_table_id,
+                        token,
+                        kb_env
+                    ),
+                    timeout=5.0
+                )
+        except (asyncio.TimeoutError, Exception):
             object_type = None
         
         return {
@@ -808,6 +973,12 @@ async def get_table_schema_datatables(
         if db_name.startswith("local/"):
             # Object-based database
             berdl_table_id = db_name.replace("local/", "")
+            # Convert back from underscore format if needed
+            if "_" in berdl_table_id and "/" not in berdl_table_id:
+                # Try to reconstruct UPA format (assumes format: ws_obj_ver)
+                parts = berdl_table_id.split("_")
+                if len(parts) >= 3:
+                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
             db_path = download_pangenome_db(
                 berdl_table_id=berdl_table_id,
                 auth_token=token,
@@ -872,6 +1043,11 @@ async def get_all_tables_schema_datatables(
         # Parse db_name (same logic as single table endpoint)
         if db_name.startswith("local/"):
             berdl_table_id = db_name.replace("local/", "")
+            # Convert back from underscore format if needed
+            if "_" in berdl_table_id and "/" not in berdl_table_id:
+                parts = berdl_table_id.split("_")
+                if len(parts) >= 3:
+                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
             db_path = download_pangenome_db(
                 berdl_table_id=berdl_table_id,
                 auth_token=token,
@@ -935,6 +1111,11 @@ async def get_table_statistics(
         # Parse db_name
         if db_name.startswith("local/"):
             berdl_table_id = db_name.replace("local/", "")
+            # Convert back from underscore format if needed
+            if "_" in berdl_table_id and "/" not in berdl_table_id:
+                parts = berdl_table_id.split("_")
+                if len(parts) >= 3:
+                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
             db_path = download_pangenome_db(
                 berdl_table_id=berdl_table_id,
                 auth_token=token,
@@ -1013,6 +1194,11 @@ async def execute_aggregation(
         # Parse db_name
         if db_name.startswith("local/"):
             berdl_table_id = db_name.replace("local/", "")
+            # Convert back from underscore format if needed
+            if "_" in berdl_table_id and "/" not in berdl_table_id:
+                parts = berdl_table_id.split("_")
+                if len(parts) >= 3:
+                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
             db_path = download_pangenome_db(
                 berdl_table_id=berdl_table_id,
                 auth_token=token,
@@ -1126,6 +1312,12 @@ async def query_table_data_enhanced(
         # Parse berdl_table_id
         if request.berdl_table_id.startswith("local/"):
             berdl_table_id = request.berdl_table_id.replace("local/", "")
+            # Convert back from underscore format if needed
+            if "_" in berdl_table_id and "/" not in berdl_table_id:
+                # Try to reconstruct UPA format (assumes format: ws_obj_ver)
+                parts = berdl_table_id.split("_")
+                if len(parts) >= 3:
+                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
         else:
             berdl_table_id = request.berdl_table_id
         
@@ -1136,6 +1328,9 @@ async def query_table_data_enhanced(
             )
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            logger.error(f"Error downloading database: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to access database: {str(e)}")
         
         if not validate_table_exists(db_path, request.table_name):
             available = list_tables(db_path)
