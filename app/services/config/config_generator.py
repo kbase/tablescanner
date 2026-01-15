@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .ai_provider import AIProvider, ColumnInference, get_ai_provider
-from .schema_analyzer import SchemaAnalyzer, TableProfile
-from .fingerprint import DatabaseFingerprint
+from ..ai.ai_provider import AIProvider, ColumnInference, get_ai_provider
+from ..data.schema_analyzer import SchemaAnalyzer, TableProfile
+from ..data.fingerprint import DatabaseFingerprint
 
 logger = logging.getLogger(__name__)
 

@@ -412,7 +412,7 @@ async def list_tables_by_object(
         config_url = None
         has_cached_config = False
         try:
-            from app.services.fingerprint import DatabaseFingerprint
+            from app.services.data.fingerprint import DatabaseFingerprint
             fp_service = DatabaseFingerprint()
             safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
             fingerprint = fp_service.compute(db_path)
@@ -427,13 +427,9 @@ async def list_tables_by_object(
         
         # Check for builtin fallback config
         has_builtin_config = False
+        # Configs are now stored in DataTables Viewer, not here
+        has_builtin_config = False
         builtin_config_id = None
-        try:
-            from app.configs import has_fallback_config, get_fallback_config_id
-            has_builtin_config = has_fallback_config(object_type)
-            builtin_config_id = get_fallback_config_id(object_type)
-        except Exception as e:
-            logger.debug(f"Fallback config check: {e}")
         
         # Get database size
         database_size = None
@@ -769,7 +765,7 @@ async def generate_viewer_config(
         cache_dir = get_cache_dir()
         
         # Import config generator
-        from app.services.config_generator import ConfigGenerator
+        from app.services.config.config_generator import ConfigGenerator
         
         # Get database path (using existing handle logic)
         client = KBaseClient(token, kb_env, cache_dir)
@@ -826,7 +822,7 @@ async def get_generated_config(fingerprint: str):
     ```
     """
     try:
-        from app.services.fingerprint import DatabaseFingerprint
+        from app.services.data.fingerprint import DatabaseFingerprint
         
         fp = DatabaseFingerprint()
         config = fp.get_cached_config(fingerprint)
@@ -864,7 +860,7 @@ async def list_ai_providers():
     ```
     """
     try:
-        from app.services.ai_provider import list_ai_providers
+        from app.services.ai.ai_provider import list_ai_providers
         
         providers = list_ai_providers()
         return [
@@ -893,7 +889,7 @@ async def list_cached_configs():
     ```
     """
     try:
-        from app.services.fingerprint import DatabaseFingerprint
+        from app.services.data.fingerprint import DatabaseFingerprint
         
         fp = DatabaseFingerprint()
         cached = fp.list_cached()
@@ -921,7 +917,7 @@ async def delete_cached_config(fingerprint: str):
     ```
     """
     try:
-        from app.services.fingerprint import DatabaseFingerprint
+        from app.services.data.fingerprint import DatabaseFingerprint
         
         fp = DatabaseFingerprint()
         deleted = fp.clear_cache(fingerprint)
@@ -991,7 +987,7 @@ async def generate_config_for_object(
             object_type = None
         
         # Generate config
-        from app.services.config_generator import ConfigGenerator
+        from app.services.config.config_generator import ConfigGenerator
         
         generator = ConfigGenerator()
         
@@ -1008,94 +1004,79 @@ async def generate_config_for_object(
         except Exception as e:
             logger.warning(f"Error building schema: {e}")
         
-        # Try AI generation with fallback cascade
-        fallback_used = False
-        fallback_reason = None
-        config_source = "rules"
-        ai_error = None
-        ai_available = True
+        # Check if config already exists in DataTables Viewer
+        from app.services.config_registry import get_config_registry
+        from app.services.viewer_client import get_viewer_client
         
+        registry = get_config_registry()
+        viewer = get_viewer_client()
+        
+        # Check registry first
+        if not force_regenerate and registry.has_config(object_type):
+            # Verify with viewer
+            if viewer.check_config_exists(object_type):
+                logger.info(f"Config already exists for {object_type}, skipping generation")
+                return ConfigGenerationResponse(
+                    status="exists",
+                    fingerprint="",
+                    config_url="",
+                    config={},
+                    tables_analyzed=0,
+                    columns_inferred=0,
+                    ai_provider_used=None,
+                    generation_time_ms=0,
+                    cache_hit=True,
+                )
+            else:
+                # Registry says it exists but viewer doesn't - update registry
+                registry.mark_no_config(object_type)
+        
+        # Generate config with AI
         try:
             result = generator.generate(
                 db_path=db_path,
                 handle_ref=berdl_table_id,
-                force_regenerate=force_regenerate,
-                ai_preference="argo",  # Argo-only strategy
+                force_regenerate=True,  # Always generate fresh for new configs
+                ai_preference="argo",
             )
-            config_source = "ai" if result.ai_provider_used else "rules"
+            
+            # Add object type to config
+            if object_type and "objectType" not in result.config:
+                result.config["objectType"] = object_type
+            
+            # Send config to DataTables Viewer
+            try:
+                viewer.send_config(
+                    object_type=object_type,
+                    source_ref=berdl_table_id,
+                    config=result.config
+                )
+                # Mark as having config
+                registry.mark_has_config(object_type)
+                status = "generated_and_sent"
+            except Exception as e:
+                logger.error(f"Failed to send config to viewer: {e}")
+                # Still return the config even if viewer send failed
+                status = "generated_but_send_failed"
+            
+            return ConfigGenerationResponse(
+                status=status,
+                fingerprint=result.fingerprint,
+                config_url="",
+                config=result.config,
+                tables_analyzed=result.tables_analyzed,
+                columns_inferred=result.columns_inferred,
+                ai_provider_used=result.ai_provider_used,
+                generation_time_ms=result.generation_time_ms,
+                cache_hit=False,
+            )
             
         except Exception as gen_error:
-            logger.warning(f"Config generation failed, trying fallback: {gen_error}")
-            ai_error = str(gen_error)
-            ai_available = False
-            
-            # Try builtin fallback
-            from app.configs import get_fallback_config, get_fallback_config_id
-            fallback_config = get_fallback_config(object_type)
-            
-            if fallback_config:
-                fallback_used = True
-                fallback_reason = "generation_failed"
-                config_source = "builtin"
-                
-                # Create mock result
-                from dataclasses import dataclass
-                @dataclass
-                class MockResult:
-                    config: dict
-                    fingerprint: str
-                    cache_hit: bool = False
-                    tables_analyzed: int = 0
-                    columns_inferred: int = 0
-                    ai_provider_used: str | None = None
-                    generation_time_ms: float = 0.0
-                
-                safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
-                result = MockResult(
-                    config=fallback_config,
-                    fingerprint=f"{safe_ref}_fallback_{get_fallback_config_id(object_type)}",
-                )
-            else:
-                # No fallback available - return error
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Config generation failed and no fallback available: {gen_error}"
-                )
-        
-        # Add object type to config if available
-        if object_type and "objectType" not in result.config:
-            result.config["objectType"] = object_type
-        
-        # Determine status
-        if fallback_used:
-            status = "fallback"
-        elif result.cache_hit:
-            status = "cached"
-        else:
-            status = "generated"
-        
-        return ConfigGenerationResponse(
-            status=status,
-            fingerprint=result.fingerprint,
-            config_url=f"/config/generated/{result.fingerprint}",
-            config=result.config,
-            fallback_used=fallback_used,
-            fallback_reason=fallback_reason,
-            config_source=config_source,
-            db_schema=schema if schema else None,
-            table_schemas=table_schemas if table_schemas else None,
-            tables_analyzed=result.tables_analyzed,
-            columns_inferred=result.columns_inferred,
-            total_rows=total_rows,
-            ai_provider_used=result.ai_provider_used,
-            ai_available=ai_available,
-            ai_error=ai_error,
-            generation_time_ms=result.generation_time_ms,
-            cache_hit=result.cache_hit,
-            object_type=object_type,
-            object_ref=berdl_table_id,
-            api_version="2.0",
-        )
+            logger.error(f"Config generation failed: {gen_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Config generation failed: {gen_error}"
+            )
         
     except HTTPException:
         raise
@@ -1135,23 +1116,12 @@ async def get_config_for_object(
             kb_env=kb_env
         )
         
-        # Compute fingerprint and check cache
-        from app.services.fingerprint import DatabaseFingerprint
-        
-        fp_service = DatabaseFingerprint()
-        safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
-        schema_fp = fp_service.compute(db_path)
-        fingerprint = f"{safe_ref}_{schema_fp}"
-        
-        config = fp_service.get_cached_config(fingerprint)
-        
-        if config is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No cached config for object {ws_ref}. Use POST /object/{ws_ref}/config/generate to create one."
-            )
-        
-        return config
+        # Configs are now stored in DataTables Viewer
+        # This endpoint is deprecated - configs should be retrieved from viewer
+        raise HTTPException(
+            status_code=404,
+            detail=f"Configs are now stored in DataTables Viewer. Use POST /object/{ws_ref}/config/generate to create one, then retrieve from viewer."
+        )
         
     except HTTPException:
         raise

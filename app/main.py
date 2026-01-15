@@ -37,16 +37,25 @@ def create_app() -> FastAPI:
     description = """
     ## TableScanner API
 
-    A FastAPI service for querying BERDL table data from KBase.
+    A FastAPI service for querying tabular data from KBase with AI-powered
+    configuration generation for DataTables Viewer.
 
     ### Features
-    - List pangenomes from BERDLTables objects
-    - List tables within a pangenome
+    - List tables in KBase objects
     - Query table data with filtering, sorting, and pagination
     - Local caching for performance
+    - **AI-Powered Config Generation**: Automatically generates DataTables Viewer configs for new data types
+    - **Config Registry**: Tracks which configs exist to avoid regeneration
+    - **Viewer Integration**: Sends generated configs to DataTables Viewer for storage
 
     ### Authentication
     Pass your KBase auth token in the `Authorization` header.
+
+    ### Config Generation
+    - **AI Generation**: Automatically generates configs for new KBase data types
+    - **Registry Tracking**: Tracks which object types have configs
+    - **Viewer Storage**: Configs are sent to and stored in DataTables Viewer
+    - **Developer Editing**: Configs can be edited in DataTables Viewer
     """
 
     tags_metadata = [
@@ -61,6 +70,10 @@ def create_app() -> FastAPI:
         {
             "name": "Handle Access",
             "description": "API endpoints for accessing data via Blobstore handle references (KBH_...).",
+        },
+        {
+            "name": "Config Generation",
+            "description": "AI-powered generation of DataTables Viewer configurations from database schemas.",
         },
         {
             "name": "Cache Management",

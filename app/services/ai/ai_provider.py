@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from .schema_analyzer import ColumnProfile, TableProfile
-from .type_inference import DataType, InferredType, TransformConfig, TypeInferenceEngine
+from ..data.schema_analyzer import ColumnProfile, TableProfile
+from ..data.type_inference import DataType, InferredType, TransformConfig, TypeInferenceEngine
 
 logger = logging.getLogger(__name__)
 

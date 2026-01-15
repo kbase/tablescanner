@@ -11,9 +11,9 @@ Modules:
     - fingerprint: Database fingerprinting for caching
 """
 
-from .type_inference import TypeInferenceEngine, InferredType, DataType
-from .schema_analyzer import SchemaAnalyzer, ColumnProfile, TableProfile
-from .ai_provider import (
+from .data.type_inference import TypeInferenceEngine, InferredType, DataType
+from .data.schema_analyzer import SchemaAnalyzer, ColumnProfile, TableProfile
+from .ai.ai_provider import (
     AIProvider,
     AIProviderFactory,
     get_ai_provider,
@@ -21,10 +21,10 @@ from .ai_provider import (
     ColumnInference,
     ProviderStatus,
 )
-from .fingerprint import DatabaseFingerprint
-from .config_generator import ConfigGenerator, GenerationResult
-from .prompts import build_table_config_prompt, detect_value_patterns, compute_numeric_stats
-from .validation import validate_config, validate_table_config, validate_ai_response, sanitize_config
+from .data.fingerprint import DatabaseFingerprint
+from .config.config_generator import ConfigGenerator, GenerationResult
+from .ai.prompts import build_table_config_prompt, detect_value_patterns, compute_numeric_stats
+from .data.validation import validate_config, validate_table_config, validate_ai_response, sanitize_config
 
 __all__ = [
     # Type inference

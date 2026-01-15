@@ -47,6 +47,10 @@ class Settings(BaseSettings):
         default="https://kbase.us/services",
         description="Base URL for KBase services"
     )
+    VIEWER_API_URL: str = Field(
+        default="http://localhost:3000/api",
+        description="DataTables Viewer API base URL for sending generated configs"
+    )
     BLOBSTORE_URL: str = Field(
         default="https://kbase.us/services/shock-api",
         description="KBase blobstore/shock service URL"

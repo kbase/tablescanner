@@ -3,6 +3,9 @@ docs/DEMO_SCRIPT.md
 docs/QUICKSTART.md
 docs/internal/
 DATABASE_SCHEMA.md
+docs/personal/
+archive/
+docs/archive
 
 .DS_Store
 .idea
