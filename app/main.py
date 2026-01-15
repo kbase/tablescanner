@@ -37,25 +37,24 @@ def create_app() -> FastAPI:
     description = """
     ## TableScanner API
 
-    A FastAPI service for querying tabular data from KBase with AI-powered
-    configuration generation for DataTables Viewer.
+    A FastAPI service for querying tabular data from KBase SQLite databases.
+    Provides a comprehensive DataTables Viewer-compatible API with advanced
+    query capabilities, type-aware filtering, and performance optimizations.
 
     ### Features
     - List tables in KBase objects
     - Query table data with filtering, sorting, and pagination
-    - Local caching for performance
-    - **AI-Powered Config Generation**: Automatically generates DataTables Viewer configs for new data types
-    - **Config Registry**: Tracks which configs exist to avoid regeneration
-    - **Viewer Integration**: Sends generated configs to DataTables Viewer for storage
+    - Type-aware filtering with automatic numeric conversion
+    - Advanced filter operators (eq, ne, gt, gte, lt, lte, like, ilike, in, not_in, between, is_null, is_not_null)
+    - Aggregations with GROUP BY support
+    - Full-text search (FTS5)
+    - Column statistics and schema information
+    - Query result caching for performance
+    - Local database caching
+    - Connection pooling with automatic lifecycle management
 
     ### Authentication
     Pass your KBase auth token in the `Authorization` header.
-
-    ### Config Generation
-    - **AI Generation**: Automatically generates configs for new KBase data types
-    - **Registry Tracking**: Tracks which object types have configs
-    - **Viewer Storage**: Configs are sent to and stored in DataTables Viewer
-    - **Developer Editing**: Configs can be edited in DataTables Viewer
     """
 
     tags_metadata = [
@@ -70,10 +69,6 @@ def create_app() -> FastAPI:
         {
             "name": "Handle Access",
             "description": "API endpoints for accessing data via Blobstore handle references (KBH_...).",
-        },
-        {
-            "name": "Config Generation",
-            "description": "AI-powered generation of DataTables Viewer configurations from database schemas.",
         },
         {
             "name": "Cache Management",

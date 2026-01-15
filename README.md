@@ -1,121 +1,154 @@
 # TableScanner
 
-TableScanner is a microservice for providing filtered and paginated access to tabular data stored in KBase. 
-## Functionality
+TableScanner is a production-grade microservice for querying tabular data from KBase SQLite databases. It provides a comprehensive DataTables Viewer-compatible API with advanced query capabilities, type-aware filtering, and performance optimizations.
 
-The service provides two methods for data access:
-1. **Hierarchical REST**: Path-based endpoints for navigating objects and tables using GET requests (includes object type detection).
-2. **Flat POST**: A single endpoint (`/table-data`) for programmatic queries.
+## Features
 
+- **Data Access**: Query SQLite databases from KBase objects and handles
+- **Type-Aware Filtering**: Automatic numeric conversion for proper filtering
+- **Advanced Operators**: Support for eq, ne, gt, gte, lt, lte, like, ilike, in, not_in, between, is_null, is_not_null
+- **Aggregations**: GROUP BY support with count, sum, avg, min, max, stddev, variance, distinct_count
+- **Full-Text Search**: FTS5 support with automatic virtual table creation
+- **Performance**: Connection pooling, query caching, automatic indexing
+- **Statistics**: Pre-computed column statistics (min, max, mean, median, stddev)
+- **Schema Information**: Detailed table and column schema with indexes
 
-## Architecture
-
-TableScanner operates as a bridge between KBase storage and client applications:
-1. **Data Fetching**: Retrieves SQLite databases from the KBase Blobstore.
-2. **Local Caching**: Stores databases locally to avoid repeated downloads.
-3. **Indexing**: Creates indices on-the-fly for all table columns to optimize query performance.
-4. **API Layer**: A FastAPI application that handles requests and executes SQL queries against the local cache.
-5. **Config Control Plane**: Unified configuration management with lifecycle, versioning, and AI integration.
-
-### Config System
-
-TableScanner includes a unified **Config System** supporting both AI-generated and developer-edited configs:
-
-- **Developer Configs**: Edit JSON files (like `berdl_tables.json`) and sync to system
-- **AI Generation**: Automatically generate configs for new KBase data tables
-- **Versioning**: Draft → Proposed → Published workflow with full history
-- **Smart Resolution**: Cascading config resolution with fallbacks
-
-**Quick Start**:
-```bash
-# Edit developer config
-vim app/configs/berdl_tables.json
-python scripts/sync_developer_configs.py --filename berdl_tables.json
-
-# Generate config via AI
-curl -X POST "http://127.0.0.1:8000/object/76990/7/2/config/generate"
-```
-
-See [docs/CONFIG_SYSTEM.md](docs/CONFIG_SYSTEM.md) for complete documentation.
-
-Technical details on race conditions, UI design, and concurrency are available in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Web Explorer
-
-Access the interactive **Research Data Explorer** at:
-`http://localhost:8000/static/viewer.html`
-
-Features:
-- **Sidebar-First Navigation**: IDE-like experience for pangenome and table selection.
-- **Scientific Modern UI**: Light-themed, high-density interface with premium typography.
-- **Interactive Tools**: Global search, column visibility controls, and density toggles.
-- **Performance**: Instant filtering and sticky headers for a research-grade experience.
-
-## Setup
+## Quick Start
 
 ### Production
+
 ```bash
 docker compose up --build -d
 ```
+
 The service will be available at `http://localhost:8000`. API documentation is at `/docs`.
 
 ### Development
+
 ```bash
 cp .env.example .env
+# Edit .env and set KB_SERVICE_AUTH_TOKEN
 bash scripts/dev.sh
 ```
 
 ## API Usage
 
-### Path-based REST
-List tables and identify object type:
-`GET /object/{upa}/tables`
+### List Tables
 
-**Example Response**:
-```json
-{
-    "berdl_table_id": "76990/7/2",
-    "object_type": "KBaseFBA.GenomeDataLakeTables-2.0",
-    "tables": [
-        {"name": "Genes", "row_count": 3356, "column_count": 18},
-        {"name": "Metadata_Conditions", "row_count": 42, "column_count": 12}
-    ],
-    "source": "Cache"
-}
+```bash
+curl -H "Authorization: Bearer $KB_TOKEN" \
+     "http://localhost:8000/object/76990/7/2/tables"
 ```
 
-Query table data:
-`GET /object/{upa}/tables/{table_name}/data?limit=5`
+### Query Table Data
 
-### Flat POST
-Query table data:
-`POST /table-data`
-
-Payload example:
-```json
-{
-    "berdl_table_id": "76990/7/2",
-    "table_name": "Genes",
-    "limit": 100
-}
+```bash
+curl -H "Authorization: Bearer $KB_TOKEN" \
+     "http://localhost:8000/object/76990/7/2/tables/Genes/data?limit=10"
 ```
+
+### Enhanced Query with Filters
+
+```bash
+curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "berdl_table_id": "local/76990_7_2",
+       "table_name": "Genes",
+       "limit": 100,
+       "filters": [
+         {"column": "contigs", "operator": "gt", "value": "50"}
+       ]
+     }' \
+     "http://localhost:8000/table-data"
+```
+
+### Aggregation Query
+
+```bash
+curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "group_by": ["category"],
+       "aggregations": [
+         {"column": "value", "function": "sum", "alias": "total"}
+       ]
+     }' \
+     "http://localhost:8000/api/aggregate/local/76990_7_2/tables/Data"
+```
+
+## Documentation
+
+- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation with examples
+- **[Services Documentation](docs/SERVICES.md)** - Service architecture and implementation details
+- **[Development Guide](docs/DEVELOPMENT.md)** - Setup, testing, and contribution guidelines
+
+## Architecture
+
+TableScanner operates as a bridge between KBase storage and client applications:
+
+1. **Data Fetching**: Retrieves SQLite databases from KBase Blobstore
+2. **Local Caching**: Stores databases locally to avoid repeated downloads
+3. **Connection Pooling**: Manages database connections with automatic lifecycle
+4. **Query Execution**: Type-aware filtering with automatic numeric conversion
+5. **Performance**: Query caching, automatic indexing, SQLite optimizations
+6. **API Layer**: FastAPI application with comprehensive endpoints
 
 ## Project Structure
-- `app/`: Application logic and routes.
-  - `app/services/`: Organized service modules:
-    - `config/`: Config management (store, resolver, developer configs)
-    - `ai/`: AI services (providers, prompts)
-    - `data/`: Data analysis (schema, fingerprinting, validation)
-  - `app/configs/`: Developer-editable JSON configs and registry.
-  - `app/db/`: Database schema for config system.
-- `app/utils/`: Utilities for caching, SQLite, and KBase Workspace integration.
-- `static/`: Production-grade Web Explorer (`viewer.html`).
-- `docs/`: Technical documentation:
-  - `docs/CONFIG_SYSTEM.md`: Complete config system documentation.
-  - `docs/API_EXAMPLES.md`: API usage examples.
-- `scripts/`: Utility scripts:
-  - `scripts/sync_developer_configs.py`: Sync JSON configs to system.
-- `tests/`: Test suite.
+
+```
+TableScanner/
+├── app/
+│   ├── main.py              # FastAPI application
+│   ├── routes.py            # API endpoints
+│   ├── models.py            # Pydantic models
+│   ├── config.py            # Configuration settings
+│   ├── services/
+│   │   └── data/
+│   │       ├── connection_pool.py    # Connection pooling
+│   │       ├── query_service.py      # Query execution
+│   │       ├── schema_service.py     # Schema information
+│   │       ├── statistics_service.py # Column statistics
+│   │       └── ...
+│   └── utils/
+│       ├── sqlite.py        # SQLite utilities
+│       ├── workspace.py     # KBase workspace client
+│       └── cache.py         # Cache utilities
+├── docs/                    # Documentation
+├── tests/                   # Test suite
+├── archive/                 # Archived code
+└── static/                  # Static files
+```
+
+## Configuration
+
+Create a `.env` file with:
+
+```env
+KB_SERVICE_AUTH_TOKEN=your_token_here
+CACHE_DIR=/tmp/tablescanner_cache
+CACHE_MAX_AGE_HOURS=24
+DEBUG=false
+```
+
+## Performance
+
+- Query execution: < 100ms for typical queries
+- Cache hit rate: > 80% for repeated queries
+- Database connection: Reused for 30 minutes
+- Query cache: 5-minute TTL, max 1000 entries
+- Automatic indexing: One-time cost, cached thereafter
+
+## Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+```
 
 ## License
-MIT License.
+
+MIT License

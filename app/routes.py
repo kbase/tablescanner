@@ -30,8 +30,14 @@ from app.models import (
     CacheResponse,
     ServiceStatus,
     TableSchemaResponse,
-    ConfigGenerationResponse,
-    ProviderStatusResponse,
+    TableDataQueryRequest,
+    TableDataQueryResponse,
+    TableSchemaInfo,
+    TableStatisticsResponse,
+    AggregationQueryRequest,
+    HealthResponse,
+    FilterRequest,
+    AggregationRequest,
 )
 from app.utils.workspace import (
     list_pangenomes_from_object,
@@ -46,6 +52,14 @@ from app.utils.sqlite import (
     validate_table_exists,
     ensure_indices,
 )
+from app.services.data.query_service import (
+    get_query_service,
+    FilterSpec,
+    AggregationSpec,
+)
+from app.services.data.schema_service import get_schema_service
+from app.services.data.statistics_service import get_statistics_service
+from app.services.data.connection_pool import get_connection_pool
 from app.utils.cache import (
     is_cached,
     clear_cache,
@@ -98,6 +112,40 @@ async def root():
         status="running",
         cache_dir=str(settings.CACHE_DIR)
     )
+
+
+@router.get("/health", response_model=HealthResponse, tags=["General"])
+async def health_check():
+    """
+    Health check endpoint for DataTables Viewer API.
+    
+    Returns service status, cache information, and connection pool stats.
+    
+    **Example:**
+    ```bash
+    curl "http://127.0.0.1:8000/health"
+    ```
+    """
+    from datetime import datetime
+    
+    try:
+        pool = get_connection_pool()
+        cache_stats = pool.get_stats()
+        
+        return HealthResponse(
+            status="ok",
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            mode="cached_sqlite",
+            data_dir=str(settings.CACHE_DIR),
+            config_dir=str(Path(settings.CACHE_DIR) / "configs"),
+            cache={
+                "databases_cached": cache_stats["total_connections"],
+                "databases": cache_stats["connections"]
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in health check: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
@@ -360,6 +408,7 @@ async def list_tables_by_object(
     List tables for a BERDLTables object.
     
     Returns table list along with viewer config info (fingerprint/URL if cached).
+    Compatible with DataTables Viewer API format.
 
     **Example:**
     ```bash
@@ -384,22 +433,38 @@ async def list_tables_by_object(
         schemas = {}
         total_rows = 0
         
+        # Use schema service for better column type information
+        schema_service = get_schema_service()
+        
         for name in table_names:
             try:
                 columns = get_table_columns(db_path, name)
                 row_count = get_table_row_count(db_path, name)
+                
+                # Get display name (use table name as default)
+                display_name = name.replace("_", " ").title()
+                
                 tables.append({
                     "name": name,
+                    "displayName": display_name,
                     "row_count": row_count,
                     "column_count": len(columns)
                 })
                 total_rows += row_count or 0
                 
-                # Build schema map
-                schemas[name] = {col: "TEXT" for col in columns}  # Default type
+                # Build schema map with actual types
+                try:
+                    table_schema = schema_service.get_table_schema(db_path, name)
+                    schemas[name] = {
+                        col["name"]: col["type"]
+                        for col in table_schema["columns"]
+                    }
+                except Exception:
+                    # Fallback to default type
+                    schemas[name] = {col: "TEXT" for col in columns}
             except Exception as e:
                 logger.warning("Error getting table info for %s", name, exc_info=True)
-                tables.append({"name": name})
+                tables.append({"name": name, "displayName": name})
         
         # Get object type
         try:
@@ -407,27 +472,10 @@ async def list_tables_by_object(
         except Exception:
             object_type = None
         
-        # Check for cached viewer config
+        # Config-related fields (deprecated, kept for backward compatibility)
         config_fingerprint = None
         config_url = None
         has_cached_config = False
-        try:
-            from app.services.data.fingerprint import DatabaseFingerprint
-            fp_service = DatabaseFingerprint()
-            safe_ref = berdl_table_id.replace("/", "_").replace(":", "_")
-            fingerprint = fp_service.compute(db_path)
-            full_fingerprint = f"{safe_ref}_{fingerprint}"
-            
-            if fp_service.is_cached(full_fingerprint):
-                config_fingerprint = full_fingerprint
-                config_url = f"/config/generated/{full_fingerprint}"
-                has_cached_config = True
-        except Exception as e:
-            logger.debug(f"Config fingerprint check: {e}")
-        
-        # Check for builtin fallback config
-        has_builtin_config = False
-        # Configs are now stored in DataTables Viewer, not here
         has_builtin_config = False
         builtin_config_id = None
         
@@ -438,11 +486,16 @@ async def list_tables_by_object(
         except Exception:
             pass
         
+        # Format berdl_table_id for DataTables Viewer API (local/db_name format)
+        berdl_table_id_formatted = f"local/{berdl_table_id.replace('/', '_')}"
+        
         return {
-            "berdl_table_id": berdl_table_id,
+            "berdl_table_id": berdl_table_id_formatted,
+            "object_type": object_type or "LocalDatabase",
             "tables": tables,
-            "object_type": object_type,
-            "source": "Cache" if (db_path.exists() and db_path.stat().st_size > 0) else "Downloaded",
+            "source": "Local",
+            "has_config": has_cached_config,
+            "config_source": "static" if has_cached_config else None,
             "config_fingerprint": config_fingerprint,
             "config_url": config_url,
             "has_cached_config": has_cached_config,
@@ -722,409 +775,429 @@ async def list_cache():
     return {"cache_dir": str(cache_dir), "items": items, "total": len(items)}
 
 
+
+
 # =============================================================================
-# CONFIG GENERATION ENDPOINTS (AI-Powered Schema Inference)
+# DATATABLES VIEWER API ENDPOINTS
 # =============================================================================
 
 
-@router.post(
-    "/config/generate/{handle_ref}",
-    response_model=ConfigGenerationResponse,
-    tags=["Config Generation"]
-)
-async def generate_viewer_config(
-    handle_ref: str,
-    force_regenerate: bool = Query(False, description="Skip cache and regenerate"),
-    ai_provider: str = Query("auto", description="AI provider: auto, openai, argo, ollama, rules-only"),
+@router.get("/schema/{db_name}/tables/{table_name}", response_model=TableSchemaInfo, tags=["Object Access"])
+async def get_table_schema_datatables(
+    db_name: str,
+    table_name: str,
     kb_env: str = Query("appdev"),
     authorization: str | None = Header(None)
 ):
     """
-    Generate a DataTables_Viewer configuration for a SQLite database.
+    Get table schema information for DataTables Viewer API.
     
-    This endpoint analyzes the database schema and sample values using
-    AI-powered type inference to generate a viewer-compatible config.
-    
-    **Flow:**
-    1. Download SQLite via handle_ref (uses existing cache)
-    2. Compute database fingerprint
-    3. Check config cache → return if exists (unless force_regenerate)
-    4. Analyze schema and sample values
-    5. Apply rule-based + AI type inference
-    6. Generate viewer-compatible JSON config
-    7. Cache and return
+    Returns column types, constraints, and indexes.
     
     **Example:**
     ```bash
-    curl -X POST -H "Authorization: $KB_TOKEN" \\
-         "http://127.0.0.1:8000/config/generate/KBH_248028"
+    curl -H "Authorization: $KB_TOKEN" \
+         "http://127.0.0.1:8000/schema/local/76990_7_2/tables/Genes"
     ```
     """
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        # Import config generator
-        from app.services.config.config_generator import ConfigGenerator
-        
-        # Get database path (using existing handle logic)
-        client = KBaseClient(token, kb_env, cache_dir)
-        
-        safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_dir = cache_dir / "handles"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        db_path = db_dir / f"{safe_handle}.db"
-        
-        # Download if not cached
-        if not db_path.exists():
-            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-            try:
-                client.download_blob_file(handle_ref, temp_path)
-                temp_path.rename(db_path)
-            except Exception:
-                temp_path.unlink(missing_ok=True)
-                raise
-        
-        # Generate config
-        generator = ConfigGenerator()
-        result = generator.generate(
-            db_path=db_path,
-            handle_ref=handle_ref,
-            force_regenerate=force_regenerate,
-            ai_preference=ai_provider,
-        )
-        
-        return ConfigGenerationResponse(
-            status="cached" if result.cache_hit else "generated",
-            fingerprint=result.fingerprint,
-            config_url=f"/config/generated/{result.fingerprint}",
-            config=result.config,
-            tables_analyzed=result.tables_analyzed,
-            columns_inferred=result.columns_inferred,
-            ai_provider_used=result.ai_provider_used,
-            generation_time_ms=result.generation_time_ms,
-            cache_hit=result.cache_hit,
-        )
-        
-    except Exception as e:
-        logger.error(f"Error generating config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/config/generated/{fingerprint}", tags=["Config Generation"])
-async def get_generated_config(fingerprint: str):
-    """
-    Retrieve a previously generated configuration by fingerprint.
-    
-    **Example:**
-    ```bash
-    curl "http://127.0.0.1:8000/config/generated/KBH_248028_abc123def456"
-    ```
-    """
-    try:
-        from app.services.data.fingerprint import DatabaseFingerprint
-        
-        fp = DatabaseFingerprint()
-        config = fp.get_cached_config(fingerprint)
-        
-        if config is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Config not found for fingerprint: {fingerprint}"
+        # Parse db_name (format: local/db_name or handle/KBH_xxx)
+        if db_name.startswith("local/"):
+            # Object-based database
+            berdl_table_id = db_name.replace("local/", "")
+            db_path = download_pangenome_db(
+                berdl_table_id=berdl_table_id,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
             )
+        elif db_name.startswith("handle/"):
+            # Handle-based database
+            handle_ref = db_name.replace("handle/", "")
+            client = KBaseClient(token, kb_env, cache_dir)
+            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
+            db_dir = cache_dir / "handles"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / f"{safe_handle}.db"
+            
+            if not db_path.exists():
+                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+                try:
+                    client.download_blob_file(handle_ref, temp_path)
+                    temp_path.rename(db_path)
+                except Exception:
+                    temp_path.unlink(missing_ok=True)
+                    raise
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid db_name format: {db_name}")
         
-        return config
+        if not validate_table_exists(db_path, table_name):
+            available = list_tables(db_path)
+            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
+        
+        schema_service = get_schema_service()
+        schema = schema_service.get_table_schema(db_path, table_name)
+        
+        return schema
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving config: {e}")
+        logger.error(f"Error getting schema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get(
-    "/config/providers",
-    response_model=list[ProviderStatusResponse],
-    tags=["Config Generation"]
-)
-async def list_ai_providers():
+@router.get("/schema/{db_name}/tables", tags=["Object Access"])
+async def get_all_tables_schema_datatables(
+    db_name: str,
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
     """
-    List available AI providers and their status.
-    
-    Returns the availability and priority of each AI provider.
-    Lower priority numbers indicate higher preference.
+    Get schema information for all tables in a database.
     
     **Example:**
     ```bash
-    curl "http://127.0.0.1:8000/config/providers"
+    curl -H "Authorization: $KB_TOKEN" \
+         "http://127.0.0.1:8000/schema/local/76990_7_2/tables"
     ```
     """
     try:
-        from app.services.ai.ai_provider import list_ai_providers
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
         
-        providers = list_ai_providers()
-        return [
-            ProviderStatusResponse(
-                name=p.name,
-                available=p.available,
-                priority=p.priority,
-                error=p.error,
+        # Parse db_name (same logic as single table endpoint)
+        if db_name.startswith("local/"):
+            berdl_table_id = db_name.replace("local/", "")
+            db_path = download_pangenome_db(
+                berdl_table_id=berdl_table_id,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
             )
-            for p in providers
+        elif db_name.startswith("handle/"):
+            handle_ref = db_name.replace("handle/", "")
+            client = KBaseClient(token, kb_env, cache_dir)
+            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
+            db_dir = cache_dir / "handles"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / f"{safe_handle}.db"
+            
+            if not db_path.exists():
+                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+                try:
+                    client.download_blob_file(handle_ref, temp_path)
+                    temp_path.rename(db_path)
+                except Exception:
+                    temp_path.unlink(missing_ok=True)
+                    raise
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid db_name format: {db_name}")
+        
+        schema_service = get_schema_service()
+        schemas = schema_service.get_all_tables_schema(db_path)
+        
+        return schemas
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting all schemas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/object/{db_name}/tables/{table_name}/stats", response_model=TableStatisticsResponse, tags=["Object Access"])
+async def get_table_statistics(
+    db_name: str,
+    table_name: str,
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
+    """
+    Get column statistics for a table.
+    
+    Returns pre-computed statistics including null_count, distinct_count,
+    min, max, mean, median, stddev, and sample values.
+    
+    **Example:**
+    ```bash
+    curl -H "Authorization: $KB_TOKEN" \
+         "http://127.0.0.1:8000/object/local/76990_7_2/tables/Genes/stats"
+    ```
+    """
+    try:
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        
+        # Parse db_name
+        if db_name.startswith("local/"):
+            berdl_table_id = db_name.replace("local/", "")
+            db_path = download_pangenome_db(
+                berdl_table_id=berdl_table_id,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
+            )
+        elif db_name.startswith("handle/"):
+            handle_ref = db_name.replace("handle/", "")
+            client = KBaseClient(token, kb_env, cache_dir)
+            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
+            db_dir = cache_dir / "handles"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / f"{safe_handle}.db"
+            
+            if not db_path.exists():
+                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+                try:
+                    client.download_blob_file(handle_ref, temp_path)
+                    temp_path.rename(db_path)
+                except Exception:
+                    temp_path.unlink(missing_ok=True)
+                    raise
+        else:
+            # Try as berdl_table_id directly
+            db_path = download_pangenome_db(
+                berdl_table_id=db_name,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
+            )
+        
+        if not validate_table_exists(db_path, table_name):
+            available = list_tables(db_path)
+            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
+        
+        stats_service = get_statistics_service()
+        stats = stats_service.get_table_statistics(db_path, table_name)
+        
+        return stats
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/aggregate/{db_name}/tables/{table_name}", response_model=TableDataQueryResponse, tags=["Object Access"])
+async def execute_aggregation(
+    db_name: str,
+    table_name: str,
+    request: AggregationQueryRequest,
+    kb_env: str = Query("appdev"),
+    authorization: str | None = Header(None)
+):
+    """
+    Execute aggregation query with GROUP BY.
+    
+    **Example:**
+    ```bash
+    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
+         -d '{
+               "group_by": ["category"],
+               "aggregations": [
+                 {"column": "value", "function": "sum", "alias": "total"}
+               ],
+               "filters": [{"column": "value", "operator": "gt", "value": 100}]
+             }' \
+         "http://127.0.0.1:8000/api/aggregate/local/76990_7_2/tables/Data"
+    ```
+    """
+    try:
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        
+        # Parse db_name
+        if db_name.startswith("local/"):
+            berdl_table_id = db_name.replace("local/", "")
+            db_path = download_pangenome_db(
+                berdl_table_id=berdl_table_id,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
+            )
+        elif db_name.startswith("handle/"):
+            handle_ref = db_name.replace("handle/", "")
+            client = KBaseClient(token, kb_env, cache_dir)
+            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
+            db_dir = cache_dir / "handles"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / f"{safe_handle}.db"
+            
+            if not db_path.exists():
+                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+                try:
+                    client.download_blob_file(handle_ref, temp_path)
+                    temp_path.rename(db_path)
+                except Exception:
+                    temp_path.unlink(missing_ok=True)
+                    raise
+        else:
+            # Try as berdl_table_id directly
+            db_path = download_pangenome_db(
+                berdl_table_id=db_name,
+                auth_token=token,
+                cache_dir=cache_dir,
+                kb_env=kb_env
+            )
+        
+        if not validate_table_exists(db_path, table_name):
+            available = list_tables(db_path)
+            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
+        
+        # Convert request to query service format
+        query_service = get_query_service()
+        
+        filters = None
+        if request.filters:
+            filters = [
+                FilterSpec(
+                    column=f.column,
+                    operator=f.operator,
+                    value=f.value,
+                    value2=f.value2
+                )
+                for f in request.filters
+            ]
+        
+        aggregations = [
+            AggregationSpec(
+                column=a.column,
+                function=a.function,
+                alias=a.alias
+            )
+            for a in request.aggregations
         ]
         
+        result = query_service.execute_query(
+            db_path=db_path,
+            table_name=table_name,
+            limit=request.limit,
+            offset=request.offset,
+            filters=filters,
+            aggregations=aggregations,
+            group_by=request.group_by
+        )
+        
+        return TableDataQueryResponse(**result)
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error listing providers: {e}")
+        logger.error(f"Error executing aggregation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/config/cached", tags=["Config Generation"])
-async def list_cached_configs():
+@router.post("/table-data", response_model=TableDataQueryResponse, tags=["Legacy"])
+async def query_table_data_enhanced(
+    request: TableDataQueryRequest,
+    authorization: str | None = Header(None)
+):
     """
-    List all cached generated configurations.
+    Enhanced table data query endpoint with full DataTables Viewer API support.
+    
+    Supports type-aware filtering, aggregations, and comprehensive metadata.
     
     **Example:**
     ```bash
-    curl "http://127.0.0.1:8000/config/cached"
+    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
+         -d '{
+               "berdl_table_id": "local/76990_7_2",
+               "table_name": "Genes",
+               "limit": 100,
+               "offset": 0,
+               "filters": [
+                 {"column": "contigs", "operator": "gt", "value": "50"}
+               ]
+             }' \
+         "http://127.0.0.1:8000/table-data"
     ```
     """
-    try:
-        from app.services.data.fingerprint import DatabaseFingerprint
-        
-        fp = DatabaseFingerprint()
-        cached = fp.list_cached()
-        
-        return {
-            "configs": cached,
-            "total": len(cached),
-        }
-        
-    except Exception as e:
-        logger.error(f"Error listing cached configs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/config/cached/{fingerprint}", tags=["Config Generation"])
-async def delete_cached_config(fingerprint: str):
-    """
-    Delete a specific cached configuration.
+    start_time = time.time()
     
-    Use this to invalidate a cached config and force regeneration on next request.
-    
-    **Example:**
-    ```bash
-    curl -X DELETE "http://127.0.0.1:8000/config/cached/76990_7_2_abc123"
-    ```
-    """
     try:
-        from app.services.data.fingerprint import DatabaseFingerprint
+        token = get_auth_token(authorization)
+        cache_dir = get_cache_dir()
+        kb_env = "appdev"  # Default, could be from request
         
-        fp = DatabaseFingerprint()
-        deleted = fp.clear_cache(fingerprint)
-        
-        if deleted > 0:
-            return {"status": "success", "message": f"Deleted config: {fingerprint}"}
+        # Parse berdl_table_id
+        if request.berdl_table_id.startswith("local/"):
+            berdl_table_id = request.berdl_table_id.replace("local/", "")
         else:
-            raise HTTPException(status_code=404, detail=f"Config not found: {fingerprint}")
+            berdl_table_id = request.berdl_table_id
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post(
-    "/object/{ws_ref:path}/config/generate",
-    response_model=ConfigGenerationResponse,
-    tags=["Config Generation"]
-)
-async def generate_config_for_object(
-    ws_ref: str,
-    force_regenerate: bool = Query(False, description="Skip cache and regenerate"),
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Generate a DataTables_Viewer configuration for a KBase object.
-    
-    This is the object-based alternative to the handle-based config generation.
-    It downloads the SQLite database from the workspace object and generates
-    an AI-powered viewer configuration.
-    
-    **Flow:**
-    1. Download SQLite from workspace object (uses existing cache)
-    2. Compute database fingerprint
-    3. Check config cache → return if exists (unless force_regenerate)
-    4. Analyze schema and sample values
-    5. Apply rule-based + Argo AI type inference
-    6. Validate and cache generated config
-    7. Return
-    
-    **Example:**
-    ```bash
-    curl -X POST -H "Authorization: $KB_TOKEN" \\
-         "http://127.0.0.1:8000/object/76990/7/2/config/generate"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        berdl_table_id = ws_ref
-        
-        # Download database
-        db_path = download_pangenome_db(
-            berdl_table_id=berdl_table_id,
-            auth_token=token,
-            cache_dir=cache_dir,
-            kb_env=kb_env
-        )
-        
-        # Get object type for config metadata
+        # Download (or get cached) DB
         try:
-            object_type = get_object_type(berdl_table_id, token, kb_env)
-        except Exception:
-            object_type = None
+            db_path = download_pangenome_db(
+                berdl_table_id, token, cache_dir, kb_env
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         
-        # Generate config
-        from app.services.config.config_generator import ConfigGenerator
+        if not validate_table_exists(db_path, request.table_name):
+            available = list_tables(db_path)
+            raise HTTPException(404, f"Table '{request.table_name}' not found. Available: {available}")
         
-        generator = ConfigGenerator()
+        # Convert request to query service format
+        query_service = get_query_service()
         
-        # Build schema info for response
-        schema = {}
-        table_schemas = {}
-        total_rows = 0
-        try:
-            table_names = list_tables(db_path)
-            for tbl in table_names:
-                cols = get_table_columns(db_path, tbl)
-                schema[tbl] = {c: "TEXT" for c in cols}
-                total_rows += get_table_row_count(db_path, tbl) or 0
-        except Exception as e:
-            logger.warning(f"Error building schema: {e}")
-        
-        # Check if config already exists in DataTables Viewer
-        from app.services.config_registry import get_config_registry
-        from app.services.viewer_client import get_viewer_client
-        
-        registry = get_config_registry()
-        viewer = get_viewer_client()
-        
-        # Check registry first
-        if not force_regenerate and registry.has_config(object_type):
-            # Verify with viewer
-            if viewer.check_config_exists(object_type):
-                logger.info(f"Config already exists for {object_type}, skipping generation")
-                return ConfigGenerationResponse(
-                    status="exists",
-                    fingerprint="",
-                    config_url="",
-                    config={},
-                    tables_analyzed=0,
-                    columns_inferred=0,
-                    ai_provider_used=None,
-                    generation_time_ms=0,
-                    cache_hit=True,
+        # Convert filters
+        filters = None
+        if request.filters:
+            filters = [
+                FilterSpec(
+                    column=f.column,
+                    operator=f.operator,
+                    value=f.value,
+                    value2=f.value2
                 )
-            else:
-                # Registry says it exists but viewer doesn't - update registry
-                registry.mark_no_config(object_type)
-        
-        # Generate config with AI
-        try:
-            result = generator.generate(
-                db_path=db_path,
-                handle_ref=berdl_table_id,
-                force_regenerate=True,  # Always generate fresh for new configs
-                ai_preference="argo",
-            )
-            
-            # Add object type to config
-            if object_type and "objectType" not in result.config:
-                result.config["objectType"] = object_type
-            
-            # Send config to DataTables Viewer
-            try:
-                viewer.send_config(
-                    object_type=object_type,
-                    source_ref=berdl_table_id,
-                    config=result.config
+                for f in request.filters
+            ]
+        elif request.col_filter:
+            # Legacy col_filter format
+            filters = [
+                FilterSpec(
+                    column=col,
+                    operator="like",
+                    value=val
                 )
-                # Mark as having config
-                registry.mark_has_config(object_type)
-                status = "generated_and_sent"
-            except Exception as e:
-                logger.error(f"Failed to send config to viewer: {e}")
-                # Still return the config even if viewer send failed
-                status = "generated_but_send_failed"
-            
-            return ConfigGenerationResponse(
-                status=status,
-                fingerprint=result.fingerprint,
-                config_url="",
-                config=result.config,
-                tables_analyzed=result.tables_analyzed,
-                columns_inferred=result.columns_inferred,
-                ai_provider_used=result.ai_provider_used,
-                generation_time_ms=result.generation_time_ms,
-                cache_hit=False,
-            )
-            
-        except Exception as gen_error:
-            logger.error(f"Config generation failed: {gen_error}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Config generation failed: {gen_error}"
-            )
+                for col, val in request.col_filter.items()
+            ]
+        
+        # Convert aggregations
+        aggregations = None
+        if request.aggregations:
+            aggregations = [
+                AggregationSpec(
+                    column=a.column,
+                    function=a.function,
+                    alias=a.alias
+                )
+                for a in request.aggregations
+            ]
+        
+        # Execute query
+        result = query_service.execute_query(
+            db_path=db_path,
+            table_name=request.table_name,
+            limit=request.limit,
+            offset=request.offset,
+            columns=request.columns,
+            sort_column=request.sort_column,
+            sort_order=request.sort_order,
+            search_value=request.search_value,
+            filters=filters,
+            aggregations=aggregations,
+            group_by=request.group_by
+        )
+        
+        return TableDataQueryResponse(**result)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating config for object: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/object/{ws_ref:path}/config", tags=["Config Generation"])
-async def get_config_for_object(
-    ws_ref: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Get cached viewer config for a KBase object.
-    
-    Returns 404 if no config has been generated yet. Use the
-    POST /object/{ws_ref}/config/generate endpoint to create one.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \\
-         "http://127.0.0.1:8000/object/76990/7/2/config"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        berdl_table_id = ws_ref
-        
-        # Download database (needed for fingerprint computation)
-        db_path = download_pangenome_db(
-            berdl_table_id=berdl_table_id,
-            auth_token=token,
-            cache_dir=cache_dir,
-            kb_env=kb_env
-        )
-        
-        # Configs are now stored in DataTables Viewer
-        # This endpoint is deprecated - configs should be retrieved from viewer
-        raise HTTPException(
-            status_code=404,
-            detail=f"Configs are now stored in DataTables Viewer. Use POST /object/{ws_ref}/config/generate to create one, then retrieve from viewer."
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting config for object: {e}")
+        logger.error(f"Error querying table data: {e}")
         raise HTTPException(status_code=500, detail=str(e))

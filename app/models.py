@@ -356,333 +356,128 @@ class ServiceStatus(BaseModel):
     cache_dir: str = Field(..., description="Cache directory path")
 
 
+
+
 # =============================================================================
-# CONFIG GENERATION MODELS
+# DATATABLES VIEWER API MODELS
 # =============================================================================
 
 
-class ColumnInferenceResponse(BaseModel):
-    """AI-inferred column characteristics."""
+class FilterRequest(BaseModel):
+    """Filter specification for DataTables Viewer API."""
+    column: str = Field(..., description="Column name to filter")
+    operator: str = Field(
+        ...,
+        description="Filter operator: eq, ne, gt, gte, lt, lte, like, ilike, in, not_in, between, is_null, is_not_null"
+    )
+    value: Any = Field(None, description="Filter value (or first value for 'between')")
+    value2: Any = Field(None, description="Second value for 'between' operator")
+
+
+class AggregationRequest(BaseModel):
+    """Aggregation specification for DataTables Viewer API."""
+    column: str = Field(..., description="Column name to aggregate")
+    function: str = Field(
+        ...,
+        description="Aggregation function: count, sum, avg, min, max, stddev, variance, distinct_count"
+    )
+    alias: str | None = Field(None, description="Alias for aggregated column")
+
+
+class TableDataQueryRequest(BaseModel):
+    """Enhanced table data query request for DataTables Viewer API."""
+    berdl_table_id: str = Field(..., description="Database identifier (local/db_name format)")
+    table_name: str = Field(..., description="Table name")
+    limit: int = Field(100, ge=1, le=500000, description="Maximum rows to return")
+    offset: int = Field(0, ge=0, description="Number of rows to skip")
+    columns: list[str] | None = Field(None, description="List of columns to select (None = all)")
+    sort_column: str | None = Field(None, description="Column to sort by")
+    sort_order: Literal["ASC", "DESC"] = Field("ASC", description="Sort direction")
+    search_value: str | None = Field(None, description="Global search term")
+    col_filter: dict[str, str] | None = Field(None, description="Simple column filters (legacy)")
+    filters: list[FilterRequest] | None = Field(None, description="Advanced filter specifications")
+    aggregations: list[AggregationRequest] | None = Field(None, description="Aggregation specifications")
+    group_by: list[str] | None = Field(None, description="Columns for GROUP BY clause")
+
+
+class AggregationQueryRequest(BaseModel):
+    """Aggregation query request."""
+    group_by: list[str] = Field(..., description="Columns for GROUP BY")
+    aggregations: list[AggregationRequest] = Field(..., description="Aggregation specifications")
+    filters: list[FilterRequest] | None = Field(None, description="Filter specifications")
+    limit: int = Field(100, ge=1, le=500000, description="Maximum rows to return")
+    offset: int = Field(0, ge=0, description="Number of rows to skip")
+
+
+class ColumnTypeInfo(BaseModel):
+    """Column type information."""
+    name: str = Field(..., description="Column name")
+    type: str = Field(..., description="SQLite type (INTEGER, REAL, TEXT, etc.)")
+    notnull: bool = Field(False, description="Whether column is NOT NULL")
+    pk: bool = Field(False, description="Whether column is PRIMARY KEY")
+    dflt_value: Any = Field(None, description="Default value")
+
+
+class QueryMetadata(BaseModel):
+    """Query execution metadata."""
+    query_type: str = Field(..., description="Type of query: select, aggregate")
+    sql: str = Field(..., description="Executed SQL query")
+    filters_applied: int = Field(0, description="Number of filters applied")
+    has_search: bool = Field(False, description="Whether search was applied")
+    has_sort: bool = Field(False, description="Whether sorting was applied")
+    has_group_by: bool = Field(False, description="Whether GROUP BY was applied")
+    has_aggregations: bool = Field(False, description="Whether aggregations were applied")
+
+
+class TableDataQueryResponse(BaseModel):
+    """Enhanced table data query response for DataTables Viewer API."""
+    headers: list[str] = Field(..., description="Column names")
+    data: list[list[str]] = Field(..., description="Row data as list of lists")
+    total_count: int = Field(..., description="Total rows in table (before filtering)")
+    column_types: list[ColumnTypeInfo] = Field(..., description="Column type information")
+    query_metadata: QueryMetadata = Field(..., description="Query execution metadata")
+    cached: bool = Field(False, description="Whether result was from cache")
+    execution_time_ms: float = Field(..., description="Query execution time in milliseconds")
+    limit: int = Field(..., description="Limit applied")
+    offset: int = Field(..., description="Offset applied")
+    table_name: str = Field(..., description="Table name")
+    database_path: str = Field(..., description="Path to database file")
+
+
+class TableSchemaInfo(BaseModel):
+    """Table schema information."""
+    table: str = Field(..., description="Table name")
+    columns: list[ColumnTypeInfo] = Field(..., description="Column information")
+    indexes: list[dict[str, str]] = Field(default_factory=list, description="Index information")
+
+
+class ColumnStatistic(BaseModel):
+    """Column statistics."""
     column: str = Field(..., description="Column name")
-    data_type: str = Field(..., description="Inferred data type")
-    display_name: str = Field(..., description="Human-readable display name")
-    categories: list[str] = Field(default_factory=list, description="Category groupings")
-    transform: dict | None = Field(None, description="Rendering transformation")
-    width: str = Field("auto", description="Column width")
-    pin: Literal["left", "right"] | None = Field(None, description="Pin position")
-    sortable: bool = Field(True, description="Enable sorting")
-    filterable: bool = Field(True, description="Enable filtering")
-    copyable: bool = Field(False, description="Show copy button")
-    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Inference confidence")
-    source: Literal["rules", "ai", "hybrid"] = Field("rules", description="Inference source")
-    reasoning: str = Field("", description="Explanation of inference")
+    type: str = Field(..., description="Column type")
+    null_count: int = Field(0, description="Number of NULL values")
+    distinct_count: int = Field(0, description="Number of distinct values")
+    min: Any = Field(None, description="Minimum value")
+    max: Any = Field(None, description="Maximum value")
+    mean: float | None = Field(None, description="Mean value")
+    median: float | None = Field(None, description="Median value")
+    stddev: float | None = Field(None, description="Standard deviation")
+    sample_values: list[Any] = Field(default_factory=list, description="Sample values")
 
 
-class ConfigGenerationResponse(BaseModel):
-    """Response from config generation endpoint."""
-    # Core fields
-    status: Literal["generated", "cached", "fallback", "error"] = Field(
-        ..., 
-        description="Generation status: generated (new), cached (from cache), fallback (builtin), error"
-    )
-    fingerprint: str = Field(..., description="Database fingerprint for caching")
-    config_url: str = Field(..., description="URL to retrieve generated config")
-    config: dict = Field(..., description="Full DataTypeConfig JSON")
-    
-    # Fallback metadata
-    fallback_used: bool = Field(
-        False,
-        description="Whether a fallback config was used instead of AI generation"
-    )
-    fallback_reason: str | None = Field(
-        None,
-        description="Reason for fallback: ai_unavailable, generation_failed, object_type_matched"
-    )
-    config_source: Literal["ai", "rules", "cache", "builtin", "error"] = Field(
-        "rules",
-        description="Source of the configuration"
-    )
-    
-    # Schema information (viewer can use directly)
-    db_schema: dict | None = Field(
-        None,
-        alias="schema",
-        description="Simple schema: {table_name: {column: type}}"
-    )
-    table_schemas: dict | None = Field(
-        None,
-        description="Full PRAGMA table_info per table"
-    )
-    
-    # Statistics
-    tables_analyzed: int = Field(..., description="Number of tables analyzed")
-    columns_inferred: int = Field(..., description="Number of columns inferred")
-    total_rows: int = Field(0, description="Total rows across all tables")
-    
-    # AI provider info
-    ai_provider_used: str | None = Field(None, description="AI provider that was used")
-    ai_available: bool = Field(True, description="Whether AI was available")
-    ai_error: str | None = Field(None, description="Error message if AI failed")
-    
-    # Performance
-    generation_time_ms: float = Field(..., description="Time to generate config in ms")
-    cache_hit: bool = Field(..., description="Whether config was from cache")
-    
-    # Object metadata
-    object_type: str | None = Field(None, description="KBase object type")
-    object_ref: str | None = Field(None, description="Object reference (ws/obj/ver)")
-    
-    # Versioning
-    api_version: str = Field("2.0", description="API version for compatibility")
+class TableStatisticsResponse(BaseModel):
+    """Table statistics response."""
+    table: str = Field(..., description="Table name")
+    row_count: int = Field(..., description="Total row count")
+    columns: list[ColumnStatistic] = Field(..., description="Column statistics")
+    last_updated: int = Field(..., description="Last update timestamp (milliseconds since epoch)")
 
 
-class ProviderStatusResponse(BaseModel):
-    """Status of an AI provider."""
-    name: str = Field(..., description="Provider name")
-    available: bool = Field(..., description="Whether provider is available")
-    priority: int = Field(..., description="Provider priority (lower = higher)")
-    error: str | None = Field(None, description="Error message if unavailable")
-
-
-# =============================================================================
-# CONFIG CONTROL PLANE MODELS
-# =============================================================================
-
-
-class ConfigState(str, Enum):
-    """Lifecycle states for configuration records."""
-    DRAFT = "draft"
-    PROPOSED = "proposed"
-    PUBLISHED = "published"
-    DEPRECATED = "deprecated"
-    ARCHIVED = "archived"
-
-
-class ConfigSourceType(str, Enum):
-    """Types of configuration sources."""
-    OBJECT = "object"
-    HANDLE = "handle"
-    BUILTIN = "builtin"
-    CUSTOM = "custom"
-
-
-class ConfigCreateRequest(BaseModel):
-    """Request to create a new configuration."""
-    source_type: ConfigSourceType = Field(..., description="Type of source")
-    source_ref: str = Field(..., description="Reference (UPA, handle, or ID)")
-    config: dict = Field(..., description="Full DataTypeConfig JSON")
-    extends_id: str | None = Field(None, description="Parent config ID to inherit from")
-    change_summary: str = Field("Initial creation", description="Description of changes")
-    object_type: str | None = Field(None, description="KBase object type")
-    fingerprint: str | None = Field(None, description="Database fingerprint")
-
-
-class ConfigUpdateRequest(BaseModel):
-    """Request to update an existing draft configuration."""
-    config: dict | None = Field(None, description="Updated config (full replacement)")
-    overlays: dict | None = Field(None, description="Delta overlays to merge")
-    change_summary: str = Field(..., description="Description of changes")
-
-
-class ConfigRecord(BaseModel):
-    """Full configuration record from database."""
-    id: str = Field(..., description="Unique config ID")
-    source_type: ConfigSourceType = Field(..., description="Type of source")
-    source_ref: str = Field(..., description="Source reference")
-    fingerprint: str | None = Field(None, description="Database fingerprint")
-    version: int = Field(1, description="Version number")
-    state: ConfigState = Field(ConfigState.DRAFT, description="Lifecycle state")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
-    created_by: str = Field(..., description="Creator identifier")
-    published_at: datetime | None = Field(None, description="Publication timestamp")
-    published_by: str | None = Field(None, description="Publisher identifier")
-    config: dict = Field(..., description="Full DataTypeConfig JSON")
-    extends_id: str | None = Field(None, description="Parent config ID")
-    overlays: dict | None = Field(None, description="Delta overlays from parent")
-    object_type: str | None = Field(None, description="KBase object type")
-    ai_provider: str | None = Field(None, description="AI provider that generated config")
-    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Confidence score")
-    generation_time_ms: float | None = Field(None, description="Generation time in ms")
-    change_summary: str | None = Field(None, description="Latest change summary")
-    change_author: str | None = Field(None, description="Latest change author")
-
-
-class ConfigListResponse(BaseModel):
-    """Paginated response for listing configurations."""
-    configs: list[ConfigRecord] = Field(default_factory=list)
-    total: int = Field(..., description="Total number of matching configs")
-    page: int = Field(1, ge=1, description="Current page number")
-    per_page: int = Field(20, ge=1, le=100, description="Items per page")
-
-
-class ConfigResolveResponse(BaseModel):
-    """Response from config resolution endpoint."""
-    config: dict = Field(..., description="Resolved DataTypeConfig")
-    source: Literal["user_override", "published", "generated", "builtin", "default"] = Field(
-        ..., description="Resolution source"
-    )
-    config_id: str | None = Field(None, description="Config record ID if from database")
-    fingerprint: str | None = Field(None, description="Database fingerprint")
-    version: int | None = Field(None, description="Config version")
-    object_type: str | None = Field(None, description="KBase object type")
-    resolution_time_ms: float = Field(..., description="Resolution time in ms")
-
-
-class AIProposalRequest(BaseModel):
-    """AI agent proposal for configuration changes."""
-    intent: str = Field(..., description="Natural language description of intent")
-    target_config_id: str | None = Field(None, description="Existing config ID to modify")
-    target_source_ref: str | None = Field(None, description="Source ref for new config")
-    target_tables: list[str] = Field(default_factory=list, description="Tables to affect")
-    proposed_changes: dict = Field(..., description="Proposed config or overlay")
-    reasoning: str = Field("", description="AI reasoning for changes")
-    confidence: float = Field(1.0, ge=0.0, le=1.0, description="AI confidence")
-    requires_human_review: bool = Field(True, description="AI self-assessment")
-
-
-class AIProposalResponse(BaseModel):
-    """Response to AI config proposal."""
-    status: Literal["accepted", "needs_revision", "rejected"] = Field(
-        ..., description="Proposal status"
-    )
-    proposal_id: str = Field(..., description="Unique proposal ID for tracking")
-    config_id: str | None = Field(None, description="Created/updated config ID")
-    validation_errors: list[str] = Field(default_factory=list, description="Validation issues")
-    suggestions: list[str] = Field(default_factory=list, description="Improvement suggestions")
-    diff_summary: str | None = Field(None, description="Summary of changes")
-
-
-class ConfigValidationRequest(BaseModel):
-    """Request to validate a configuration."""
-    config: dict = Field(..., description="Config to validate")
-    strict: bool = Field(False, description="Enable strict validation")
-
-
-class ConfigValidationResponse(BaseModel):
-    """Response from config validation."""
-    valid: bool = Field(..., description="Whether config is valid")
-    errors: list[str] = Field(default_factory=list, description="Validation errors")
-    warnings: list[str] = Field(default_factory=list, description="Validation warnings")
-
-
-# =============================================================================
-# USER OVERRIDES MODELS
-# =============================================================================
-
-
-class UserOverrideRequest(BaseModel):
-    """Request to set a user override."""
-    source_ref: str = Field(..., description="Source reference")
-    override_config: dict = Field(..., description="Partial or full config override")
-    priority: int = Field(100, ge=1, le=1000, description="Override priority (lower = higher)")
-
-
-class UserOverrideResponse(BaseModel):
-    """Response for user override operations."""
-    user_id: str = Field(..., description="User identifier")
-    source_ref: str = Field(..., description="Source reference")
-    override_config: dict = Field(..., description="Override configuration")
-    priority: int = Field(..., description="Override priority")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
-
-
-# =============================================================================
-# CONFIG DIFF MODELS
-# =============================================================================
-
-
-class ConfigDiffRequest(BaseModel):
-    """Request to diff two configs."""
-    config_id1: str = Field(..., description="First config ID")
-    config_id2: str | None = Field(None, description="Second config ID (or use version)")
-    version1: int | None = Field(None, description="First version number")
-    version2: int | None = Field(None, description="Second version number")
-
-
-class ConfigDiffResponse(BaseModel):
-    """Response from config diff."""
-    added: dict = Field(default_factory=dict, description="Added fields")
-    removed: dict = Field(default_factory=dict, description="Removed fields")
-    modified: dict = Field(default_factory=dict, description="Modified fields")
-    unchanged: dict = Field(default_factory=dict, description="Unchanged fields")
-    summary: str = Field(..., description="Human-readable summary")
-    has_changes: bool = Field(..., description="Whether any changes exist")
-
-
-# =============================================================================
-# CONFIG TESTING MODELS
-# =============================================================================
-
-
-class ConfigTestRequest(BaseModel):
-    """Request to test a configuration."""
-    config_id: str = Field(..., description="Config to test")
-    test_types: list[Literal["schema", "data", "performance", "integration"]] = Field(
-        default_factory=lambda: ["schema", "data", "performance"],
-        description="Types of tests to run"
-    )
-    db_path: str | None = Field(None, description="Path to test database (optional)")
-
-
-class TestResultDetail(BaseModel):
-    """Individual test result."""
-    test_type: Literal["schema", "data", "performance", "integration"] = Field(..., description="Test type")
-    status: Literal["passed", "failed", "warning"] = Field(..., description="Test status")
-    details: dict = Field(default_factory=dict, description="Test details")
-    execution_time_ms: float = Field(..., description="Execution time")
-    errors: list[str] = Field(default_factory=list, description="Errors found")
-    warnings: list[str] = Field(default_factory=list, description="Warnings found")
-
-
-class ConfigTestResponse(BaseModel):
-    """Response from config testing."""
-    config_id: str = Field(..., description="Tested config ID")
-    results: list[TestResultDetail] = Field(..., description="Test results")
-    overall_status: Literal["passed", "failed", "warning"] = Field(..., description="Overall status")
-    total_time_ms: float = Field(..., description="Total test execution time")
-
-
-# =============================================================================
-# DEVELOPER CONFIG MODELS
-# =============================================================================
-
-
-class DeveloperConfigInfo(BaseModel):
-    """Information about a developer-editable config file."""
-    filename: str = Field(..., description="Config filename")
-    config_id: str = Field(..., description="Config ID")
-    name: str = Field(..., description="Config name")
-    version: str = Field(..., description="Config version")
-    object_types: list[str] = Field(default_factory=list, description="Matching object types")
-    sync_status: dict = Field(..., description="Sync status with Control Plane")
-    last_modified: str = Field(..., description="File last modified timestamp")
-    file_path: str = Field(..., description="Full file path")
-
-
-class DeveloperConfigUpdateRequest(BaseModel):
-    """Request to update a developer config."""
-    config: dict = Field(..., description="Updated config JSON")
-    sync_to_control_plane: bool = Field(True, description="Sync to Control Plane after update")
-    auto_publish: bool = Field(False, description="Auto-publish after sync")
-
-
-class DeveloperConfigSyncResponse(BaseModel):
-    """Response from config sync operation."""
-    status: Literal["synced", "unchanged", "error"] = Field(..., description="Sync status")
-    config_id: str | None = Field(None, description="Config ID in Control Plane")
-    state: str | None = Field(None, description="Config state")
-    version: int | None = Field(None, description="Config version")
-    message: str = Field(..., description="Status message")
-
-
-class DeveloperConfigPreviewResponse(BaseModel):
-    """Response from config preview."""
-    filename: str = Field(..., description="Config filename")
-    config: dict = Field(..., description="Config JSON")
-    object_types: list[str] = Field(default_factory=list, description="Matching object types")
-    sync_status: dict = Field(..., description="Sync status")
-    tables: list[str] = Field(default_factory=list, description="Table names")
-    table_count: int = Field(..., description="Number of tables")
-    resolution: dict | None = Field(None, description="Resolution preview if source_ref provided")
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str = Field("ok", description="Service status")
+    timestamp: str = Field(..., description="ISO8601 timestamp")
+    mode: str = Field("cached_sqlite", description="Service mode")
+    data_dir: str = Field(..., description="Data directory path")
+    config_dir: str = Field(..., description="Config directory path")
+    cache: dict[str, Any] = Field(..., description="Cache information")
