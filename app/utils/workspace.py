@@ -130,6 +130,16 @@ class KBaseClient:
     
     def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
+        # If the requested env matches the configured env, use the configured URLs
+        from app.config import settings
+        if self.kb_env == settings.KB_ENV:
+            return {
+                "workspace": settings.WORKSPACE_URL,
+                "shock": settings.BLOBSTORE_URL,
+                "handle": f"{settings.KBASE_ENDPOINT}/handle_service", 
+            }
+
+        # Fallback for other environments
         endpoints = {
             "appdev": {
                 "workspace": "https://appdev.kbase.us/services/ws",

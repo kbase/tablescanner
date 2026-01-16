@@ -59,9 +59,23 @@ class Settings(BaseSettings):
         default=False,
         description="Enable debug mode with verbose logging"
     )
+    KB_ENV: str = Field(
+        default="appdev",
+        description="KBase environment (appdev, ci, prod)"
+    )
 
     # Root path for proxy deployment (e.g., "/services/berdl_table_scanner")
     ROOT_PATH: str = ""
+    
+    # Timeout settings
+    DOWNLOAD_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        description="Timeout in seconds for downloading databases"
+    )
+    KBASE_API_TIMEOUT_SECONDS: float = Field(
+        default=10.0,
+        description="Timeout in seconds for KBase API calls"
+    )
 
     class Config:
         env_file = ".env"

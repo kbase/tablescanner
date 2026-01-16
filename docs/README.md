@@ -1,24 +1,31 @@
-# Documentation
+# TableScanner
 
-## Main Documentation
+**TableScanner** is a high-performance, read-only API service for querying SQLite databases stored in [KBase](https://kbase.us). It powers the DataTables Viewer and other applications requiring fast access to tabular data.
 
-- **[CONFIG_SYSTEM.md](CONFIG_SYSTEM.md)** - Complete config system documentation
-  - Developer configs (JSON files)
-  - AI-generated configs
-  - Versioning and lifecycle
-  - API endpoints
+## Documentation
 
-- **[API_EXAMPLES.md](API_EXAMPLES.md)** - API usage examples
-  - Developer config workflows
-  - AI generation
-  - Config resolution
+-   **[API Reference](API.md)**: Endpoints, authentication, and usage examples.
+-   **[Architecture](ARCHITECTURE.md)**: System design and technical overview.
+-   **[Contributing Guide](CONTRIBUTING.md)**: Setup, testing, and development standards.
 
-## Additional Documentation
+## Quick Start
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical architecture
-- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Usage guide
-- **[QUICKSTART_DEMO.md](QUICKSTART_DEMO.md)** - Quick start guide
+### Run with Docker
+```bash
+docker-compose up --build
+```
+The API will be available at `http://localhost:8000`.
 
-## Integration Guides
+### Run Locally
+```bash
+# 1. Setup environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # Edit with your KBase Token
 
-- **[personal/datatable_upgrade/upgrade.md](personal/datatable_upgrade/upgrade.md)** - DataTables Viewer integration
+# 2. Run using helper script
+./scripts/dev.sh
+```
+
+The `./scripts/dev.sh` script is the recommended way to run locally as it handles environment loading and PYTHONPATH setup automatically.

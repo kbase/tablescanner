@@ -28,8 +28,14 @@ The service will be available at `http://localhost:8000`. API documentation is a
 ```bash
 cp .env.example .env
 # Edit .env and set KB_SERVICE_AUTH_TOKEN
-bash scripts/dev.sh
+./scripts/dev.sh
 ```
+
+The helper script `scripts/dev.sh` automates the environment setup:
+1. Activates the virtual environment (`.venv` or `venv`)
+2. Loads environment variables from `.env`
+3. Sets `PYTHONPATH`
+4. Starts the FastAPI development server with hot-reload via `fastapi dev`
 
 ## API Usage
 
@@ -79,9 +85,9 @@ curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
 
 ## Documentation
 
-- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation with examples
-- **[Services Documentation](docs/SERVICES.md)** - Service architecture and implementation details
-- **[Development Guide](docs/DEVELOPMENT.md)** - Setup, testing, and contribution guidelines
+- **[API Reference](docs/API.md)** - Complete API documentation with examples
+- **[Architecture Dictionary](docs/ARCHITECTURE.md)** - System design and technical overview
+- **[Contributing Guide](docs/CONTRIBUTING.md)** - Setup, testing, and contribution guidelines
 
 ## Architecture
 
@@ -104,19 +110,15 @@ TableScanner/
 │   ├── models.py            # Pydantic models
 │   ├── config.py            # Configuration settings
 │   ├── services/
-│   │   └── data/
-│   │       ├── connection_pool.py    # Connection pooling
-│   │       ├── query_service.py      # Query execution
-│   │       ├── schema_service.py     # Schema information
-│   │       ├── statistics_service.py # Column statistics
-│   │       └── ...
-│   └── utils/
-│       ├── sqlite.py        # SQLite utilities
-│       ├── workspace.py     # KBase workspace client
-│       └── cache.py         # Cache utilities
-├── docs/                    # Documentation
-├── tests/                   # Test suite
-├── archive/                 # Archived code
+│   │   ├── data/
+│   │   │   ├── connection_pool.py    # Connection pooling
+│   │   │   ├── query_service.py      # Query execution
+│   │   │   └── ...
+│   │   └── db_helper.py     # Database resolution
+│   └── utils/               # Utilities (SQLite, KBase Client)
+├── docs/                    # Documentation (API, Architecture, Contributing)
+├── tests/                   # Test suite (Unit & Integration)
+├── scripts/                 # Helper scripts (dev.sh)
 └── static/                  # Static files
 ```
 

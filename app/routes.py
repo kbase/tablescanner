@@ -46,26 +46,21 @@ from app.utils.workspace import (
 )
 from app.utils.sqlite import (
     list_tables,
-    get_table_data,
     get_table_columns,
     get_table_row_count,
     validate_table_exists,
-    ensure_indices,
-)
-from app.services.data.query_service import (
-    get_query_service,
-    FilterSpec,
-    AggregationSpec,
 )
 from app.services.data.schema_service import get_schema_service
-from app.services.data.statistics_service import get_statistics_service
 from app.services.data.connection_pool import get_connection_pool
-from app.utils.cache import (
-    is_cached,
-    clear_cache,
-    list_cached_items,
+from app.services.db_helper import (
+    get_handle_db_path,
+    get_object_db_path,
+    ensure_table_accessible,
 )
+from app.utils.async_utils import run_sync_in_thread
+from app.utils.request_utils import TableRequestProcessor
 from app.config import settings
+from app.config_constants import MAX_LIMIT, DEFAULT_LIMIT
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -120,11 +115,6 @@ async def health_check():
     Health check endpoint for DataTables Viewer API.
     
     Returns service status, cache information, and connection pool stats.
-    
-    **Example:**
-    ```bash
-    curl "http://127.0.0.1:8000/health"
-    ```
     """
     from datetime import datetime
     
@@ -168,49 +158,30 @@ async def list_tables_by_handle(
 ):
     """
     List all tables in a SQLite database accessed via handle reference.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables"
-    ```
     """
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        # Download SQLite from handle
-        client = KBaseClient(token, kb_env, cache_dir)
-        
-        # Cache path based on handle
-        safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_dir = cache_dir / "handles"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        db_path = db_dir / f"{safe_handle}.db"
-        
-        # Atomic download to prevent race conditions
-        if not db_path.exists():
-            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-            try:
-                client.download_blob_file(handle_ref, temp_path)
-                temp_path.rename(db_path)
-            except Exception:
-                temp_path.unlink(missing_ok=True)
-                raise
+        # Get database path (handles download and caching)
+        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
         
         # List tables
-        table_names = list_tables(db_path)
+        table_names = await run_sync_in_thread(list_tables, db_path)
         tables = []
+        
+        # Get details for each table
         for name in table_names:
             try:
-                columns = get_table_columns(db_path, name)
-                row_count = get_table_row_count(db_path, name)
+                # Run these lightweight checks in thread pool too
+                columns = await run_sync_in_thread(get_table_columns, db_path, name)
+                row_count = await run_sync_in_thread(get_table_row_count, db_path, name)
                 tables.append({
                     "name": name,
                     "row_count": row_count,
                     "column_count": len(columns)
                 })
-            except Exception as e:
+            except Exception:
                 logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name})
         
@@ -220,6 +191,8 @@ async def list_tables_by_handle(
             "db_path": str(db_path)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing tables from handle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -234,39 +207,16 @@ async def get_table_schema_by_handle(
 ):
     """
     Get schema (columns) for a table accessed via handle reference.
-
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables/Genes/schema"
-    ```
     """
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        client = KBaseClient(token, kb_env, cache_dir)
+        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
+        await ensure_table_accessible(db_path, table_name)
         
-        safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_dir = cache_dir / "handles"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        db_path = db_dir / f"{safe_handle}.db"
-        
-        if not db_path.exists():
-            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-            try:
-                client.download_blob_file(handle_ref, temp_path)
-                temp_path.rename(db_path)
-            except Exception:
-                temp_path.unlink(missing_ok=True)
-                raise
-        
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
-        
-        columns = get_table_columns(db_path, table_name)
-        row_count = get_table_row_count(db_path, table_name)
+        columns = await run_sync_in_thread(get_table_columns, db_path, table_name)
+        row_count = await run_sync_in_thread(get_table_row_count, db_path, table_name)
         
         return {
             "handle_ref": handle_ref,
@@ -286,7 +236,7 @@ async def get_table_schema_by_handle(
 async def get_table_data_by_handle(
     handle_ref: str,
     table_name: str,
-    limit: int = Query(100, ge=1, le=500000),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
     sort_column: str | None = Query(None),
     sort_order: str | None = Query("ASC"),
@@ -296,63 +246,24 @@ async def get_table_data_by_handle(
 ):
     """
     Query table data from SQLite via handle reference.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "https://appdev.kbase.us/services/berdl_table_scanner/handle/KBH_248028/tables/Genes/data?limit=5"
-    ```
     """
-    start_time = time.time()
-    
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         
-        client = KBaseClient(token, kb_env, cache_dir)
+        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
+        await ensure_table_accessible(db_path, table_name)
         
-        safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-        db_dir = cache_dir / "handles"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        db_path = db_dir / f"{safe_handle}.db"
-        
-        if not db_path.exists():
-            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-            try:
-                client.download_blob_file(handle_ref, temp_path)
-                temp_path.rename(db_path)
-            except Exception:
-                temp_path.unlink(missing_ok=True)
-                raise
-        
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
-        
-        # Query data
-        headers, data, total_count, filtered_count, db_query_ms, conversion_ms = get_table_data(
-            sqlite_file=db_path,
+        return await TableRequestProcessor.process_data_request(
+            db_path=db_path,
             table_name=table_name,
             limit=limit,
             offset=offset,
             sort_column=sort_column,
-            sort_order=sort_order,
+            sort_order=sort_order or "ASC",
             search_value=search,
+            handle_ref_or_id=handle_ref
         )
-        
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        return {
-            "handle_ref": handle_ref,
-            "table_name": table_name,
-            "headers": headers,
-            "data": data,
-            "row_count": len(data),
-            "total_count": total_count,
-            "filtered_count": filtered_count,
-            "response_time_ms": response_time_ms,
-            "db_query_ms": db_query_ms
-        }
         
     except HTTPException:
         raise
@@ -376,12 +287,6 @@ async def list_pangenomes_by_object(
 ):
     """
     List pangenomes from a BERDLTables/GenomeDataLakeTables object.
-
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/pangenomes"
-    ```
     """
     try:
         token = get_auth_token(authorization)
@@ -411,15 +316,6 @@ async def list_tables_by_object(
 ):
     """
     List tables for a BERDLTables object.
-    
-    Returns table list along with viewer config info (fingerprint/URL if cached).
-    Compatible with DataTables Viewer API format.
-
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \\
-         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
-    ```
     """
     import asyncio
     
@@ -428,70 +324,11 @@ async def list_tables_by_object(
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
-        # Check cache first to avoid blocking KBase calls
-        from app.utils.cache import get_upa_cache_path
-        cache_dir_path = Path(cache_dir)
-        db_dir = get_upa_cache_path(cache_dir_path, berdl_table_id)
-        db_path = db_dir / "tables.db"
+        # Get database path (handles caching, download timeouts via helper)
+        db_path = await get_object_db_path(berdl_table_id, token, kb_env, cache_dir)
         
-        # If not cached, download in thread pool to avoid blocking
-        if not db_path.exists():
-            try:
-                # Run blocking download in thread pool with timeout
-                import asyncio
-                try:
-                    # Use to_thread if available (Python 3.9+)
-                    if hasattr(asyncio, 'to_thread'):
-                        db_path = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                download_pangenome_db,
-                                berdl_table_id,
-                                token,
-                                cache_dir,
-                                kb_env
-                            ),
-                            timeout=30.0  # 30 second timeout for download
-                        )
-                    else:
-                        # Fallback for older Python
-                        loop = asyncio.get_event_loop()
-                        db_path = await asyncio.wait_for(
-                            loop.run_in_executor(
-                                None,
-                                download_pangenome_db,
-                                berdl_table_id,
-                                token,
-                                cache_dir,
-                                kb_env
-                            ),
-                            timeout=30.0
-                        )
-                except asyncio.TimeoutError:
-                    logger.error(f"Database download timed out for {berdl_table_id}")
-                    raise HTTPException(
-                        status_code=504,
-                        detail=f"Database download timed out. Please try again later or ensure the database is cached."
-                    )
-            except asyncio.TimeoutError:
-                logger.error(f"Database download timed out for {berdl_table_id}")
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"Database download timed out. Please try again later or ensure the database is cached."
-                )
-            except Exception as e:
-                logger.error(f"Error downloading database: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to access database. Error: {str(e)}"
-                )
-        
-        # Run table listing in thread pool to avoid blocking
-        import asyncio
-        if hasattr(asyncio, 'to_thread'):
-            table_names = await asyncio.to_thread(list_tables, db_path)
-        else:
-            loop = asyncio.get_event_loop()
-            table_names = await loop.run_in_executor(None, list_tables, db_path)
+        # List tables (run in thread)
+        table_names = await run_sync_in_thread(list_tables, db_path)
         
         tables = []
         schemas = {}
@@ -500,16 +337,12 @@ async def list_tables_by_object(
         # Use schema service for better column type information
         schema_service = get_schema_service()
         
-        # Process tables (these are fast SQLite operations, but run in thread pool for consistency)
+        # Process tables
         for name in table_names:
             try:
-                if hasattr(asyncio, 'to_thread'):
-                    columns = await asyncio.to_thread(get_table_columns, db_path, name)
-                    row_count = await asyncio.to_thread(get_table_row_count, db_path, name)
-                else:
-                    loop = asyncio.get_event_loop()
-                    columns = await loop.run_in_executor(None, get_table_columns, db_path, name)
-                    row_count = await loop.run_in_executor(None, get_table_row_count, db_path, name)
+                # Run lightweight checks in thread
+                columns = await run_sync_in_thread(get_table_columns, db_path, name)
+                row_count = await run_sync_in_thread(get_table_row_count, db_path, name)
                 
                 # Get display name (use table name as default)
                 display_name = name.replace("_", " ").title()
@@ -524,15 +357,9 @@ async def list_tables_by_object(
                 
                 # Build schema map with actual types
                 try:
-                    if hasattr(asyncio, 'to_thread'):
-                        table_schema = await asyncio.to_thread(
-                            schema_service.get_table_schema, db_path, name
-                        )
-                    else:
-                        loop = asyncio.get_event_loop()
-                        table_schema = await loop.run_in_executor(
-                            None, schema_service.get_table_schema, db_path, name
-                        )
+                    table_schema = await run_sync_in_thread(
+                        schema_service.get_table_schema, db_path, name
+                    )
                     schemas[name] = {
                         col["name"]: col["type"]
                         for col in table_schema["columns"]
@@ -540,36 +367,18 @@ async def list_tables_by_object(
                 except Exception:
                     # Fallback to default type
                     schemas[name] = {col: "TEXT" for col in columns}
-            except Exception as e:
+            except Exception:
                 logger.warning("Error getting table info for %s", name, exc_info=True)
                 tables.append({"name": name, "displayName": name})
         
-        # Get object type (non-blocking, don't fail if this times out)
-        object_type = None
+        # Get object type (non-blocking)
         try:
-            # Run in thread pool with timeout
-            if hasattr(asyncio, 'to_thread'):
-                object_type = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_object_type,
-                        berdl_table_id,
-                        token,
-                        kb_env
-                    ),
-                    timeout=5.0  # 5 second timeout
-                )
-            else:
-                loop = asyncio.get_event_loop()
-                object_type = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        get_object_type,
-                        berdl_table_id,
-                        token,
-                        kb_env
-                    ),
-                    timeout=5.0
-                )
+            # Use specific timeout for API call
+            import asyncio
+            object_type = await asyncio.wait_for(
+                run_sync_in_thread(get_object_type, berdl_table_id, token, kb_env),
+                timeout=settings.KBASE_API_TIMEOUT_SECONDS
+            )
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"Could not get object type (non-critical): {e}")
             object_type = None
@@ -618,7 +427,7 @@ async def list_tables_by_object(
 async def get_table_data_by_object(
     ws_ref: str,
     table_name: str,
-    limit: int = Query(100, ge=1, le=500000),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
     sort_column: str | None = Query(None),
     sort_order: str | None = Query("ASC"),
@@ -628,125 +437,28 @@ async def get_table_data_by_object(
 ):
     """
     Query table data from a BERDLTables object.
-
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=5"
-    ```
     """
-    import asyncio
-    
-    start_time = time.time()
-    
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
-        # Check cache first
-        from app.utils.cache import get_upa_cache_path
-        cache_dir_path = Path(cache_dir)
-        db_dir = get_upa_cache_path(cache_dir_path, berdl_table_id)
-        db_path = db_dir / "tables.db"
+        # Get and validate DB access
+        db_path = await get_object_db_path(berdl_table_id, token, kb_env, cache_dir)
+        await ensure_table_accessible(db_path, table_name)
         
-        # If not cached, download in thread pool
-        if not db_path.exists():
-            try:
-                loop = asyncio.get_event_loop()
-                db_path = await loop.run_in_executor(
-                    None,
-                    download_pangenome_db,
-                    berdl_table_id,
-                    token,
-                    cache_dir,
-                    kb_env
-                )
-            except Exception as e:
-                logger.error(f"Error downloading database: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to access database. Error: {str(e)}"
-                )
-        
-        # Validate table exists (run in thread pool)
-        import asyncio
-        if hasattr(asyncio, 'to_thread'):
-            table_exists = await asyncio.to_thread(validate_table_exists, db_path, table_name)
-        else:
-            loop = asyncio.get_event_loop()
-            table_exists = await loop.run_in_executor(None, validate_table_exists, db_path, table_name)
-        
-        if not table_exists:
-            if hasattr(asyncio, 'to_thread'):
-                available = await asyncio.to_thread(list_tables, db_path)
-            else:
-                loop = asyncio.get_event_loop()
-                available = await loop.run_in_executor(None, list_tables, db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
-        
-        # Query data (run in thread pool)
-        def run_query():
-            return get_table_data(
-                sqlite_file=db_path,
-                table_name=table_name,
-                limit=limit,
-                offset=offset,
-                sort_column=sort_column,
-                sort_order=sort_order,
-                search_value=search,
-            )
-        
-        if hasattr(asyncio, 'to_thread'):
-            query_result = await asyncio.to_thread(run_query)
-        else:
-            loop = asyncio.get_event_loop()
-            query_result = await loop.run_in_executor(None, run_query)
-        headers, data, total_count, filtered_count, db_query_ms, conversion_ms = query_result
-        
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        # Get object type (non-blocking)
-        object_type = None
-        try:
-            if hasattr(asyncio, 'to_thread'):
-                object_type = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_object_type,
-                        berdl_table_id,
-                        token,
-                        kb_env
-                    ),
-                    timeout=5.0
-                )
-            else:
-                loop = asyncio.get_event_loop()
-                object_type = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        get_object_type,
-                        berdl_table_id,
-                        token,
-                        kb_env
-                    ),
-                    timeout=5.0
-                )
-        except (asyncio.TimeoutError, Exception):
-            object_type = None
-        
-        return {
-            "berdl_table_id": berdl_table_id,
-            "table_name": table_name,
-            "headers": headers,
-            "data": data,
-            "row_count": len(data),
-            "total_count": total_count,
-            "filtered_count": filtered_count,
-            "response_time_ms": response_time_ms,
-            "db_query_ms": db_query_ms,
-            "sqlite_file": str(db_path),
-            "object_type": object_type
-        }
+        result = await TableRequestProcessor.process_data_request(
+            db_path=db_path,
+            table_name=table_name,
+            limit=limit,
+            offset=offset,
+            sort_column=sort_column,
+            sort_order=sort_order or "ASC",
+            search_value=search,
+            handle_ref_or_id=berdl_table_id
+        )
+
+        return result
         
     except HTTPException:
         raise
@@ -767,10 +479,6 @@ async def get_pangenomes(
 ):
     """
     List pangenomes from BERDLTables object.
-    
-    Returns:
-        - pangenomes: List of pangenome info
-        - pangenome_count: Total number of pangenomes
     """
     try:
         token = get_auth_token(authorization)
@@ -839,29 +547,14 @@ async def query_table_data(
 ):
     """
     Query table data using a JSON body. Recommended for programmatic access.
-
-    **Example:**
-    ```bash
-    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
-         -d '{
-               "berdl_table_id": "76990/7/2",
-               "table_name": "Metadata_Conditions",
-               "limit": 5"
-             }' \
-         "https://appdev.kbase.us/services/berdl_table_scanner/table-data"
-    ```
     """
-    start_time = time.time()
-    
     try:
         token = get_auth_token(authorization)
         cache_dir = get_cache_dir()
         kb_env = getattr(request, 'kb_env', 'appdev') or 'appdev'
         
-        # Determine filters (support both query_filters and col_filter)
         filters = request.col_filter if request.col_filter else request.query_filters
         
-        # Download (or get cached) DB - auto-resolves ID if None
         try:
             db_path = download_pangenome_db(
                 request.berdl_table_id, token, cache_dir, kb_env
@@ -872,527 +565,34 @@ async def query_table_data(
         if not validate_table_exists(db_path, request.table_name):
             available = list_tables(db_path)
             raise ValueError(f"Table '{request.table_name}' not found. Available: {available}")
-        
-        try:
-            ensure_indices(db_path, request.table_name)
-        except:
-            pass
-        
-        headers, data, total_count, filtered_count, db_query_ms, conversion_ms = get_table_data(
-            sqlite_file=db_path,
-            table_name=request.table_name,
-            limit=request.limit,
-            offset=request.offset,
-            sort_column=request.sort_column,
-            sort_order=request.sort_order,
-            search_value=request.search_value,
-            query_filters=filters,
-            columns=request.columns,
-            order_by=request.order_by
-        )
-        
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        return TableDataResponse(
-            headers=headers,
-            data=data,
-            row_count=len(data),
-            total_count=total_count,
-            filtered_count=filtered_count,
-            table_name=request.table_name,
-            response_time_ms=response_time_ms,
-            db_query_ms=db_query_ms,
-            conversion_ms=conversion_ms,
-            source="Cache" if is_cached(db_path) else "Downloaded",
-            cache_file=str(db_path),
-            sqlite_file=str(db_path)
-        )
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error querying table data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
-# CACHE MANAGEMENT
-# =============================================================================
-
-@router.post("/clear-cache", response_model=CacheResponse, tags=["Cache Management"])
-async def clear_pangenome_cache(
-    berdl_table_id: str | None = Query(None)
-):
-    """Clear cached databases."""
-    try:
-        cache_dir = get_cache_dir()
-        result = clear_cache(cache_dir, berdl_table_id)
-        return CacheResponse(status="success", message=result.get("message", "Cache cleared"))
-    except Exception as e:
-        return CacheResponse(status="error", message=str(e))
-
-
-@router.get("/cache", tags=["Cache Management"])
-async def list_cache():
-    """List cached items."""
-    cache_dir = get_cache_dir()
-    items = list_cached_items(cache_dir)
-    return {"cache_dir": str(cache_dir), "items": items, "total": len(items)}
-
-
-
-
-# =============================================================================
-# DATATABLES VIEWER API ENDPOINTS
-# =============================================================================
-
-
-@router.get("/schema/{db_name}/tables/{table_name}", response_model=TableSchemaInfo, tags=["Object Access"])
-async def get_table_schema_datatables(
-    db_name: str,
-    table_name: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Get table schema information for DataTables Viewer API.
-    
-    Returns column types, constraints, and indexes.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "http://127.0.0.1:8000/schema/local/76990_7_2/tables/Genes"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        # Parse db_name (format: local/db_name or handle/KBH_xxx)
-        if db_name.startswith("local/"):
-            # Object-based database
-            berdl_table_id = db_name.replace("local/", "")
-            # Convert back from underscore format if needed
-            if "_" in berdl_table_id and "/" not in berdl_table_id:
-                # Try to reconstruct UPA format (assumes format: ws_obj_ver)
-                parts = berdl_table_id.split("_")
-                if len(parts) >= 3:
-                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
-            db_path = download_pangenome_db(
-                berdl_table_id=berdl_table_id,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        elif db_name.startswith("handle/"):
-            # Handle-based database
-            handle_ref = db_name.replace("handle/", "")
-            client = KBaseClient(token, kb_env, cache_dir)
-            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-            db_dir = cache_dir / "handles"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / f"{safe_handle}.db"
             
-            if not db_path.exists():
-                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-                try:
-                    client.download_blob_file(handle_ref, temp_path)
-                    temp_path.rename(db_path)
-                except Exception:
-                    temp_path.unlink(missing_ok=True)
-                    raise
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid db_name format: {db_name}")
+        columns_list = None
+        if request.columns and request.columns != "all":
+            columns_list = [c.strip() for c in request.columns.split(",") if c.strip()]
         
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
+        effective_sort_col = request.sort_column
+        effective_sort_dir = request.sort_order
         
-        schema_service = get_schema_service()
-        schema = schema_service.get_table_schema(db_path, table_name)
-        
-        return schema
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting schema: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/schema/{db_name}/tables", tags=["Object Access"])
-async def get_all_tables_schema_datatables(
-    db_name: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Get schema information for all tables in a database.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "http://127.0.0.1:8000/schema/local/76990_7_2/tables"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        # Parse db_name (same logic as single table endpoint)
-        if db_name.startswith("local/"):
-            berdl_table_id = db_name.replace("local/", "")
-            # Convert back from underscore format if needed
-            if "_" in berdl_table_id and "/" not in berdl_table_id:
-                parts = berdl_table_id.split("_")
-                if len(parts) >= 3:
-                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
-            db_path = download_pangenome_db(
-                berdl_table_id=berdl_table_id,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        elif db_name.startswith("handle/"):
-            handle_ref = db_name.replace("handle/", "")
-            client = KBaseClient(token, kb_env, cache_dir)
-            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-            db_dir = cache_dir / "handles"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / f"{safe_handle}.db"
+        if not effective_sort_col and request.order_by:
+            first_sort = request.order_by[0]
+            effective_sort_col = first_sort.get("column")
+            effective_sort_dir = first_sort.get("direction", "ASC").upper()
             
-            if not db_path.exists():
-                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-                try:
-                    client.download_blob_file(handle_ref, temp_path)
-                    temp_path.rename(db_path)
-                except Exception:
-                    temp_path.unlink(missing_ok=True)
-                    raise
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid db_name format: {db_name}")
-        
-        schema_service = get_schema_service()
-        schemas = schema_service.get_all_tables_schema(db_path)
-        
-        return schemas
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting all schemas: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/object/{db_name}/tables/{table_name}/stats", response_model=TableStatisticsResponse, tags=["Object Access"])
-async def get_table_statistics(
-    db_name: str,
-    table_name: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Get column statistics for a table.
-    
-    Returns pre-computed statistics including null_count, distinct_count,
-    min, max, mean, median, stddev, and sample values.
-    
-    **Example:**
-    ```bash
-    curl -H "Authorization: $KB_TOKEN" \
-         "http://127.0.0.1:8000/object/local/76990_7_2/tables/Genes/stats"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        # Parse db_name
-        if db_name.startswith("local/"):
-            berdl_table_id = db_name.replace("local/", "")
-            # Convert back from underscore format if needed
-            if "_" in berdl_table_id and "/" not in berdl_table_id:
-                parts = berdl_table_id.split("_")
-                if len(parts) >= 3:
-                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
-            db_path = download_pangenome_db(
-                berdl_table_id=berdl_table_id,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        elif db_name.startswith("handle/"):
-            handle_ref = db_name.replace("handle/", "")
-            client = KBaseClient(token, kb_env, cache_dir)
-            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-            db_dir = cache_dir / "handles"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / f"{safe_handle}.db"
-            
-            if not db_path.exists():
-                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-                try:
-                    client.download_blob_file(handle_ref, temp_path)
-                    temp_path.rename(db_path)
-                except Exception:
-                    temp_path.unlink(missing_ok=True)
-                    raise
-        else:
-            # Try as berdl_table_id directly
-            db_path = download_pangenome_db(
-                berdl_table_id=db_name,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
-        
-        stats_service = get_statistics_service()
-        stats = stats_service.get_table_statistics(db_path, table_name)
-        
-        return stats
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/api/aggregate/{db_name}/tables/{table_name}", response_model=TableDataQueryResponse, tags=["Object Access"])
-async def execute_aggregation(
-    db_name: str,
-    table_name: str,
-    request: AggregationQueryRequest,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Execute aggregation query with GROUP BY.
-    
-    **Example:**
-    ```bash
-    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
-         -d '{
-               "group_by": ["category"],
-               "aggregations": [
-                 {"column": "value", "function": "sum", "alias": "total"}
-               ],
-               "filters": [{"column": "value", "operator": "gt", "value": 100}]
-             }' \
-         "http://127.0.0.1:8000/api/aggregate/local/76990_7_2/tables/Data"
-    ```
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        # Parse db_name
-        if db_name.startswith("local/"):
-            berdl_table_id = db_name.replace("local/", "")
-            # Convert back from underscore format if needed
-            if "_" in berdl_table_id and "/" not in berdl_table_id:
-                parts = berdl_table_id.split("_")
-                if len(parts) >= 3:
-                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
-            db_path = download_pangenome_db(
-                berdl_table_id=berdl_table_id,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        elif db_name.startswith("handle/"):
-            handle_ref = db_name.replace("handle/", "")
-            client = KBaseClient(token, kb_env, cache_dir)
-            safe_handle = handle_ref.replace(":", "_").replace("/", "_")
-            db_dir = cache_dir / "handles"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / f"{safe_handle}.db"
-            
-            if not db_path.exists():
-                temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-                try:
-                    client.download_blob_file(handle_ref, temp_path)
-                    temp_path.rename(db_path)
-                except Exception:
-                    temp_path.unlink(missing_ok=True)
-                    raise
-        else:
-            # Try as berdl_table_id directly
-            db_path = download_pangenome_db(
-                berdl_table_id=db_name,
-                auth_token=token,
-                cache_dir=cache_dir,
-                kb_env=kb_env
-            )
-        
-        if not validate_table_exists(db_path, table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{table_name}' not found. Available: {available}")
-        
-        # Convert request to query service format
-        query_service = get_query_service()
-        
-        filters = None
-        if request.filters:
-            filters = [
-                FilterSpec(
-                    column=f.column,
-                    operator=f.operator,
-                    value=f.value,
-                    value2=f.value2
-                )
-                for f in request.filters
-            ]
-        
-        aggregations = [
-            AggregationSpec(
-                column=a.column,
-                function=a.function,
-                alias=a.alias
-            )
-            for a in request.aggregations
-        ]
-        
-        result = query_service.execute_query(
-            db_path=db_path,
-            table_name=table_name,
-            limit=request.limit,
-            offset=request.offset,
-            filters=filters,
-            aggregations=aggregations,
-            group_by=request.group_by
-        )
-        
-        return TableDataQueryResponse(**result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error executing aggregation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/table-data", response_model=TableDataQueryResponse, tags=["Legacy"])
-async def query_table_data_enhanced(
-    request: TableDataQueryRequest,
-    authorization: str | None = Header(None)
-):
-    """
-    Enhanced table data query endpoint with full DataTables Viewer API support.
-    
-    Supports type-aware filtering, aggregations, and comprehensive metadata.
-    
-    **Example:**
-    ```bash
-    curl -X POST -H "Authorization: $KB_TOKEN" -H "Content-Type: application/json" \
-         -d '{
-               "berdl_table_id": "local/76990_7_2",
-               "table_name": "Genes",
-               "limit": 100,
-               "offset": 0,
-               "filters": [
-                 {"column": "contigs", "operator": "gt", "value": "50"}
-               ]
-             }' \
-         "http://127.0.0.1:8000/table-data"
-    ```
-    """
-    start_time = time.time()
-    
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        kb_env = "appdev"  # Default, could be from request
-        
-        # Parse berdl_table_id
-        if request.berdl_table_id.startswith("local/"):
-            berdl_table_id = request.berdl_table_id.replace("local/", "")
-            # Convert back from underscore format if needed
-            if "_" in berdl_table_id and "/" not in berdl_table_id:
-                # Try to reconstruct UPA format (assumes format: ws_obj_ver)
-                parts = berdl_table_id.split("_")
-                if len(parts) >= 3:
-                    berdl_table_id = f"{parts[0]}/{parts[1]}/{parts[2]}"
-        else:
-            berdl_table_id = request.berdl_table_id
-        
-        # Download (or get cached) DB
-        try:
-            db_path = download_pangenome_db(
-                berdl_table_id, token, cache_dir, kb_env
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-        except Exception as e:
-            logger.error(f"Error downloading database: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to access database: {str(e)}")
-        
-        if not validate_table_exists(db_path, request.table_name):
-            available = list_tables(db_path)
-            raise HTTPException(404, f"Table '{request.table_name}' not found. Available: {available}")
-        
-        # Convert request to query service format
-        query_service = get_query_service()
-        
-        # Convert filters
-        filters = None
-        if request.filters:
-            filters = [
-                FilterSpec(
-                    column=f.column,
-                    operator=f.operator,
-                    value=f.value,
-                    value2=f.value2
-                )
-                for f in request.filters
-            ]
-        elif request.col_filter:
-            # Legacy col_filter format
-            filters = [
-                FilterSpec(
-                    column=col,
-                    operator="like",
-                    value=val
-                )
-                for col, val in request.col_filter.items()
-            ]
-        
-        # Convert aggregations
-        aggregations = None
-        if request.aggregations:
-            aggregations = [
-                AggregationSpec(
-                    column=a.column,
-                    function=a.function,
-                    alias=a.alias
-                )
-                for a in request.aggregations
-            ]
-        
-        # Execute query
-        result = query_service.execute_query(
+        return await TableRequestProcessor.process_data_request(
             db_path=db_path,
             table_name=request.table_name,
             limit=request.limit,
             offset=request.offset,
-            columns=request.columns,
-            sort_column=request.sort_column,
-            sort_order=request.sort_order,
+            sort_column=effective_sort_col,
+            sort_order=effective_sort_dir or "ASC",
             search_value=request.search_value,
+            columns=columns_list,
             filters=filters,
-            aggregations=aggregations,
-            group_by=request.group_by
+            handle_ref_or_id=request.berdl_table_id
         )
-        
-        return TableDataQueryResponse(**result)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying table data: {e}")
+        logger.error(f"Error querying data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
