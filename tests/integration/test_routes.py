@@ -8,10 +8,9 @@ class TestRoutes(unittest.TestCase):
 
     def test_health_check(self):
         response = self.client.get("/health")
-        # 500 is acceptable if integration test environment has no DB pool setup, 
-        # but for unit/integration it should optimally be 200 or 503.
-        # Given this is a mock integration, we check it responds.
-        self.assertIn(response.status_code, [200, 500, 503])
+        # 500/503 is NOT acceptable. Integration tests must ensure the application can start.
+        # The ConnectionPool does not require external connectivity to initialize.
+        self.assertEqual(response.status_code, 200)
 
     def test_api_docs_accessible(self):
         response = self.client.get("/docs")

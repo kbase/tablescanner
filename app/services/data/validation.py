@@ -12,6 +12,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+try:
+    from jsonschema import validate, ValidationError, Draft7Validator
+    HAS_JSONSCHEMA = True
+except ImportError:
+    HAS_JSONSCHEMA = False
+    # Dummy objects if needed
+    validate = None
+    ValidationError = Exception
+    Draft7Validator = None
+
 
 # =============================================================================
 # JSON SCHEMAS
@@ -152,7 +162,8 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, str | None]:
         Tuple of (is_valid, error_message)
     """
     try:
-        from jsonschema import validate, ValidationError, Draft7Validator
+        if not HAS_JSONSCHEMA:
+            raise ImportError("jsonschema not available")
         
         validator = Draft7Validator(DATATYPE_CONFIG_SCHEMA)
         errors = list(validator.iter_errors(config))
@@ -184,7 +195,8 @@ def validate_table_config(table_config: dict[str, Any]) -> tuple[bool, str | Non
         Tuple of (is_valid, error_message)
     """
     try:
-        from jsonschema import validate, ValidationError
+        if not HAS_JSONSCHEMA:
+            raise ImportError("jsonschema not available")
         
         validate(instance=table_config, schema=TABLE_SCHEMA)
         return True, None
@@ -206,7 +218,8 @@ def validate_ai_response(response: dict[str, Any]) -> tuple[bool, str | None]:
         Tuple of (is_valid, error_message)
     """
     try:
-        from jsonschema import validate
+        if not HAS_JSONSCHEMA:
+            raise ImportError("jsonschema not available")
         
         validate(instance=response, schema=AI_RESPONSE_SCHEMA)
         return True, None

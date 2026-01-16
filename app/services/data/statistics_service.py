@@ -12,6 +12,7 @@ import sqlite3
 import logging
 import time
 import threading
+import math
 from pathlib import Path
 from typing import Any
 from collections import OrderedDict
@@ -282,7 +283,6 @@ class StatisticsService:
                         ''', (stats.mean, stats.mean))
                         variance_row = cursor.fetchone()
                         if variance_row and variance_row[0] is not None:
-                            import math
                             variance = float(variance_row[0])
                             stats.stddev = math.sqrt(variance) if variance >= 0 else None
                 

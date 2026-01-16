@@ -12,10 +12,10 @@ Also supports legacy endpoints for backwards compatibility.
 """
 
 
-import time
+import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
 from app.utils.workspace import KBaseClient
 
 from fastapi import APIRouter, HTTPException, Header, Query
@@ -112,7 +112,7 @@ async def health_check():
     
     Returns service status, cache information, and connection pool stats.
     """
-    from datetime import datetime
+
     
     try:
         # Get connection pool stats (non-blocking)
@@ -154,7 +154,7 @@ async def list_tables_by_object(
     """
     List tables for a BERDLTables object.
     """
-    import asyncio
+
     
     try:
         token = get_auth_token(authorization)
@@ -211,7 +211,6 @@ async def list_tables_by_object(
         # Get object type (non-blocking)
         try:
             # Use specific timeout for API call
-            import asyncio
             object_type = await asyncio.wait_for(
                 run_sync_in_thread(get_object_type, berdl_table_id, token, kb_env),
                 timeout=settings.KBASE_API_TIMEOUT_SECONDS

@@ -1,6 +1,6 @@
 # TableScanner API
 
-The **TableScanner** service provides read-only access to SQLite databases stored in KBase (via Blobstore handles or Workspace objects). It supports listing tables, inspecting schemas, and querying data with filtering, sorting, and pagination.
+The **TableScanner** service provides read-only access to SQLite databases stored in KBase (via Workspace objects). It supports listing tables, inspecting schemas, and querying data with filtering, sorting, and pagination.
 
 ## Base URL
 - **Development**: `http://localhost:8000`
@@ -23,19 +23,14 @@ Detailed health check including connection pool stats.
 
 ---
 
-## 2. Handle Access
-Access databases via Blobstore Handle Reference (e.g., `KBH_12345`).
+## 2. Object Access
+Access databases via KBase Workspace Object Reference (UPA, e.g., `76990/7/2`).
 
-### `GET /handle/{handle_ref}/tables`
-List all tables in the database.
-- **Query Params**: `kb_env` (default: `appdev`)
-- **Response**: List of tables with row/column counts.
+### `GET /object/{ws_ref}/tables`
+List tables for a BERDLTables object.
+- **Response**: Table list with schema overviews.
 
-### `GET /handle/{handle_ref}/tables/{table_name}/schema`
-Get column definitions for a table.
-- **Response**: Columns list (name, type, notnull, pk).
-
-### `GET /handle/{handle_ref}/tables/{table_name}/data`
+### `GET /object/{ws_ref}/tables/{table_name}/data`
 Query table data.
 - **Query Params**:
   - `limit` (default: 100)
@@ -46,29 +41,7 @@ Query table data.
 
 ---
 
-## 3. Object Access
-Access databases via KBase Workspace Object Reference (UPA, e.g., `76990/7/2`).
-
-### `GET /object/{ws_ref}/pangenomes`
-List pangenomes associated with a BERDLTables object.
-
-### `GET /object/{ws_ref}/tables`
-List tables for a BERDLTables object.
-- **Response**: Table list with schema overviews.
-
-### `GET /object/{ws_ref}/tables/{table_name}/data`
-Query table data (same parameters as Handle Access).
-
----
-
-## 4. Legacy Endpoints
-Maintained for backward compatibility.
-
-### `GET /pangenomes`
-List pangenomes by `berdl_table_id`.
-
-### `GET /tables`
-List tables by `berdl_table_id`.
+## 3. Data Access
 
 ### `POST /table-data`
 Complex query endpoint supporting advanced filtering.

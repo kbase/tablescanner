@@ -7,6 +7,7 @@ Provides REST API endpoints for querying BERDL table data.
 Run with: uv run fastapi dev app/main.py
 """
 
+import os
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -30,7 +31,7 @@ def create_app() -> FastAPI:
     # Configure root_path for KBase dynamic services
     # KBase services are often deployed at /services/service_name
     # Pydantic Settings management or manual environ check can handle this.
-    import os
+    # Pydantic Settings management or manual environ check can handle this.
     root_path = os.environ.get("KB_SERVICE_ROOT_PATH", "")
     
 

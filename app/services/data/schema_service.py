@@ -17,6 +17,7 @@ from typing import Any
 
 from app.services.data.connection_pool import get_connection_pool
 from app.services.data.query_service import QueryService
+from app.utils.sqlite import list_tables
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class SchemaService:
         Returns:
             Dictionary mapping table names to schema information
         """
-        from app.utils.sqlite import list_tables
+        """
         
         table_names = list_tables(db_path)
         schemas = {}

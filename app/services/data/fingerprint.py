@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +41,6 @@ class DatabaseFingerprint:
         Args:
             config_dir: Directory for storing cached configs
         """
-        import os
         default_dir = os.getenv("GENERATED_CONFIG_DIR", "/tmp/tablescanner_configs")
         self.config_dir = Path(config_dir or default_dir)
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -227,5 +228,4 @@ class DatabaseFingerprint:
     
     def _get_timestamp(self) -> str:
         """Get current ISO timestamp."""
-        from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()

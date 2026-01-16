@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -348,8 +350,8 @@ class SchemaAnalyzer:
         if all(v.startswith("GO:") for v in str_values):
             patterns.append("go_term")
         
+        
         # Check for ISO date pattern
-        import re
         date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}")
         if all(date_pattern.match(v) for v in str_values):
             patterns.append("iso_date")

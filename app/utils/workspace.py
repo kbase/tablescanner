@@ -12,6 +12,19 @@ LIB_PATH = Path(__file__).parent.parent.parent / "lib" / "KBUtilLib" / "src"
 if str(LIB_PATH) not in sys.path:
     sys.path.insert(0, str(LIB_PATH))
 
+# Try conditional imports at top level
+try:
+    from kbutillib.kb_ws_utils import KBWSUtils
+    from kbutillib.notebook_utils import NotebookUtils
+    HAS_KBUTILLIB = True
+except ImportError:
+    HAS_KBUTILLIB = False
+    # Define dummy classes if needed for type hinting or logic check
+    KBWSUtils = object
+    NotebookUtils = object
+
+from app.config import settings
+
 # Configure module logger
 logger = logging.getLogger(__name__)
 
@@ -54,8 +67,8 @@ class KBaseClient:
     def _init_client(self):
         """Initialize the appropriate client."""
         try:
-            from kbutillib.kb_ws_utils import KBWSUtils
-            from kbutillib.notebook_utils import NotebookUtils
+            if not HAS_KBUTILLIB:
+                raise ImportError("KBUtilLib not found")
             
             # Create a proper combined class
             cache_dir = self.cache_dir
@@ -131,7 +144,6 @@ class KBaseClient:
     def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
         # If the requested env matches the configured env, use the configured URLs
-        from app.config import settings
         if self.kb_env == settings.KB_ENV:
             return {
                 "workspace": settings.WORKSPACE_URL,
@@ -262,6 +274,18 @@ class KBaseClient:
             return infos[0][2]
         
         return "Unknown"
+        
+    def get_object_type_only(self, ref: str) -> str:
+        """
+        Public method to get object type without fetching full data.
+        
+        Args:
+            ref: Object reference
+            
+        Returns:
+            Object type string
+        """
+        return self._get_object_type(ref)
     
     def _download_blob_fallback(self, handle_ref: str, target_path: str) -> str:
         """Download from blobstore via direct API."""
@@ -368,9 +392,9 @@ def get_object_type(
     Returns:
         Object type string (e.g., "KBaseGeneDataLakes.BERDLTables-1.0")
     """
+    """
     client = KBaseClient(auth_token, kb_env)
-    _, object_type = client.get_object_with_type(berdl_table_id)
-    return object_type
+    return client.get_object_type_only(berdl_table_id)
 
 
 

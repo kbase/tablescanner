@@ -28,10 +28,8 @@ graph TD
 
 ### 1. API Layer (`app/routes.py`)
 The entry point for all requests. It handles:
--   **Handle Access**: `/handle/{handle_ref}/tables`
 -   **Object Access**: `/object/{ws_ref}/tables`
 -   **Data Queries**: `/table-data` (Advanced filtering)
--   **Legacy Compatibility**: Backward-compatible endpoints for older clients.
 
 ### 2. Query Service (`app/services/data/query_service.py`)
 The heart of the application. It orchestrates query execution:
