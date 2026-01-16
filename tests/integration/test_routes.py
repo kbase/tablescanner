@@ -23,9 +23,13 @@ class TestRoutes(unittest.TestCase):
         data = response.json()
         self.assertIn("paths", data)
         # Verify Key Endpoints exist
-        self.assertIn("/handle/{handle_ref}/tables", data["paths"])
         self.assertIn("/object/{ws_ref}/tables", data["paths"])
-        # Verify Legacy Config endpoints are GONE
+        self.assertIn("/table-data", data["paths"])
+        
+        # Verify Deprecated Endpoints are GONE
+        self.assertNotIn("/handle/{handle_ref}/tables", data["paths"])
+        self.assertNotIn("/pangenomes", data["paths"])
+        self.assertNotIn("/tables", data["paths"])
         self.assertNotIn("/config/providers", data["paths"])
         self.assertNotIn("/config/resolve", data["paths"])
 

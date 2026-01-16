@@ -373,47 +373,6 @@ def get_object_type(
     return object_type
 
 
-def list_pangenomes_from_object(
-    berdl_table_id: str,
-    auth_token: str,
-    kb_env: str = "appdev"
-) -> list[dict[str, Any]]:
-    """
-    List all pangenomes from a BERDLTables object.
-
-    Args:
-        berdl_table_id: KBase workspace reference
-        auth_token: KBase authentication token
-        kb_env: KBase environment
-
-    Returns:
-        List of pangenome info dictionaries with:
-        - pangenome_id
-        - pangenome_taxonomy
-        - handle_ref
-        - user_genomes
-        - berdl_genomes
-    """
-    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
-    
-    pangenome_data = obj_data.get("pangenome_data", [])
-    
-    pangenomes = []
-    for pg in pangenome_data:
-        pangenomes.append({
-
-            "pangenome_taxonomy": pg.get("pangenome_taxonomy", ""),
-            "user_genomes": pg.get("user_genomes", []),
-            "berdl_genomes": pg.get("berdl_genomes", []),
-            "genome_count": len(pg.get("user_genomes", [])) + len(pg.get("berdl_genomes", [])),
-            "handle_ref": pg.get("sqllite_tables_handle_ref", ""),
-        })
-    
-    return pangenomes
-
-
-
-
 
 def download_pangenome_db(
     berdl_table_id: str,
@@ -451,12 +410,16 @@ def download_pangenome_db(
         return db_path
     
     # Fetch object metadata to get handle reference
-    pangenomes = list_pangenomes_from_object(berdl_table_id, auth_token, kb_env)
-    if not pangenomes:
-        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    pangenome_data = obj_data.get("pangenome_data", [])
     
+    if not pangenome_data:
+         raise ValueError(f"No pangenomes found in {berdl_table_id}")
+
     # Take the first (and only expected) pangenome's handle
-    handle_ref = pangenomes[0]["handle_ref"]
+    handle_ref = pangenome_data[0].get("sqllite_tables_handle_ref")
+    if not handle_ref:
+        raise ValueError(f"No handle reference found in {berdl_table_id}")
     
     # Create cache directory
     db_dir.mkdir(parents=True, exist_ok=True)

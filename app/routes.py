@@ -23,8 +23,6 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from app.models import (
     TableDataRequest,
     TableDataResponse,
-    PangenomesResponse,
-    PangenomeInfo,
     TableListResponse,
     TableInfo,
     CacheResponse,
@@ -40,7 +38,6 @@ from app.models import (
     AggregationRequest,
 )
 from app.utils.workspace import (
-    list_pangenomes_from_object,
     download_pangenome_db,
     get_object_type,
 )
@@ -53,7 +50,6 @@ from app.utils.sqlite import (
 from app.services.data.schema_service import get_schema_service
 from app.services.data.connection_pool import get_connection_pool
 from app.services.db_helper import (
-    get_handle_db_path,
     get_object_db_path,
     ensure_table_accessible,
 )
@@ -144,169 +140,10 @@ async def health_check():
 
 
 # =============================================================================
-# HANDLE-BASED ENDPOINTS (Primary REST API per diagram)
-# /{handle_ref}/tables - List tables
-# /{handle_ref}/tables/{table}/schema - Table schema
-# /{handle_ref}/tables/{table}/data - Table data with pagination
-# =============================================================================
-
-@router.get("/handle/{handle_ref}/tables", tags=["Handle Access"], response_model=TableListResponse)
-async def list_tables_by_handle(
-    handle_ref: str,
-    kb_env: str = Query("appdev", description="KBase environment"),
-    authorization: str | None = Header(None)
-):
-    """
-    List all tables in a SQLite database accessed via handle reference.
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        # Get database path (handles download and caching)
-        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
-        
-        # List tables
-        table_names = await run_sync_in_thread(list_tables, db_path)
-        tables = []
-        
-        # Get details for each table
-        for name in table_names:
-            try:
-                # Run these lightweight checks in thread pool too
-                columns = await run_sync_in_thread(get_table_columns, db_path, name)
-                row_count = await run_sync_in_thread(get_table_row_count, db_path, name)
-                tables.append({
-                    "name": name,
-                    "row_count": row_count,
-                    "column_count": len(columns)
-                })
-            except Exception:
-                logger.warning("Error getting table info for %s", name, exc_info=True)
-                tables.append({"name": name})
-        
-        return {
-            "handle_ref": handle_ref,
-            "tables": tables,
-            "db_path": str(db_path)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing tables from handle: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/handle/{handle_ref}/tables/{table_name}/schema", tags=["Handle Access"], response_model=TableSchemaResponse)
-async def get_table_schema_by_handle(
-    handle_ref: str,
-    table_name: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Get schema (columns) for a table accessed via handle reference.
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
-        await ensure_table_accessible(db_path, table_name)
-        
-        columns = await run_sync_in_thread(get_table_columns, db_path, table_name)
-        row_count = await run_sync_in_thread(get_table_row_count, db_path, table_name)
-        
-        return {
-            "handle_ref": handle_ref,
-            "table_name": table_name,
-            "columns": columns,
-            "row_count": row_count
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting schema: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/handle/{handle_ref}/tables/{table_name}/data", tags=["Handle Access"], response_model=TableDataResponse)
-async def get_table_data_by_handle(
-    handle_ref: str,
-    table_name: str,
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    offset: int = Query(0, ge=0),
-    sort_column: str | None = Query(None),
-    sort_order: str | None = Query("ASC"),
-    search: str | None = Query(None, description="Global search term"),
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    Query table data from SQLite via handle reference.
-    """
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        db_path = await get_handle_db_path(handle_ref, token, kb_env, cache_dir)
-        await ensure_table_accessible(db_path, table_name)
-        
-        return await TableRequestProcessor.process_data_request(
-            db_path=db_path,
-            table_name=table_name,
-            limit=limit,
-            offset=offset,
-            sort_column=sort_column,
-            sort_order=sort_order or "ASC",
-            search_value=search,
-            handle_ref_or_id=handle_ref
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error querying data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
 # OBJECT-BASED ENDPOINTS (via KBase workspace object reference)
-# /object/{ws_ref}/pangenomes - List pangenomes from BERDLTables object
-# /object/{ws_ref}/pangenomes/{pg_id}/tables - List tables for a pangenome
-# /object/{ws_ref}/pangenomes/{pg_id}/tables/{table}/data - Query data
+# /object/{ws_ref}/tables - List tables from KBase object
+# /object/{ws_ref}/tables/{table}/data - Query data
 # =============================================================================
-
-@router.get("/object/{ws_ref:path}/pangenomes", tags=["Object Access"], response_model=PangenomesResponse)
-async def list_pangenomes_by_object(
-    ws_ref: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    List pangenomes from a BERDLTables/GenomeDataLakeTables object.
-    """
-    try:
-        token = get_auth_token(authorization)
-        berdl_table_id = ws_ref
-        
-        pangenomes = list_pangenomes_from_object(
-            berdl_table_id=berdl_table_id,
-            auth_token=token,
-            kb_env=kb_env
-        )
-        
-        return {
-            "berdl_table_id": berdl_table_id,
-            "pangenomes": pangenomes
-        }
-        
-    except Exception as e:
-        logger.error(f"Error listing pangenomes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.get("/object/{ws_ref:path}/tables", tags=["Object Access"], response_model=TableListResponse)
 async def list_tables_by_object(
@@ -468,79 +305,10 @@ async def get_table_data_by_object(
 
 
 # =============================================================================
-# LEGACY ENDPOINTS (for backwards compatibility)
+# DATA ACCESS ENDPOINTS
 # =============================================================================
 
-@router.get("/pangenomes", response_model=PangenomesResponse, tags=["Legacy"])
-async def get_pangenomes(
-    berdl_table_id: str = Query(..., description="BERDLTables object reference"),
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """
-    List pangenomes from BERDLTables object.
-    """
-    try:
-        token = get_auth_token(authorization)
-        
-        # Support comma-separated list of IDs
-        berdl_ids = [bid.strip() for bid in berdl_table_id.split(",") if bid.strip()]
-        
-        all_pangenomes: list[dict] = []
-        
-        for bid in berdl_ids:
-            try:
-                pangenomes = list_pangenomes_from_object(bid, token, kb_env)
-                # Tag each pangenome with its source ID
-                for pg in pangenomes:
-                    pg["source_berdl_id"] = bid
-                all_pangenomes.extend(pangenomes)
-            except Exception as e:
-                logger.error(f"Error fetching pangenomes for {bid}: {e}")
-                # Continue fetching others even if one fails
-                continue
-                
-        pangenome_list = [PangenomeInfo(**pg) for pg in all_pangenomes]
-        
-        return PangenomesResponse(
-            pangenomes=pangenome_list,
-            pangenome_count=len(pangenome_list)
-        )
-    except Exception as e:
-        logger.error(f"Error in get_pangenomes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/tables", response_model=TableListResponse, tags=["Legacy"])
-async def get_tables(
-    berdl_table_id: str = Query(..., description="BERDLTables object reference"),
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
-):
-    """List tables for a BERDLTable object (auto-resolves pangenome)."""
-    try:
-        token = get_auth_token(authorization)
-        cache_dir = get_cache_dir()
-        
-        db_path = download_pangenome_db(berdl_table_id, token, cache_dir, kb_env)
-        table_names = list_tables(db_path)
-        
-        tables = []
-        for name in table_names:
-            try:
-                columns = get_table_columns(db_path, name)
-                row_count = get_table_row_count(db_path, name)
-                tables.append(TableInfo(name=name, row_count=row_count, column_count=len(columns)))
-            except Exception:
-                tables.append(TableInfo(name=name))
-        
-        return TableListResponse(tables=tables)
-    except Exception as e:
-        logger.error(f"Error listing tables: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/table-data", response_model=TableDataResponse, tags=["Legacy"])
+@router.post("/table-data", response_model=TableDataResponse, tags=["Data Access"])
 async def query_table_data(
     request: TableDataRequest,
     authorization: str | None = Header(None)
@@ -596,3 +364,4 @@ async def query_table_data(
     except Exception as e:
         logger.error(f"Error querying data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+

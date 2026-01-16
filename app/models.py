@@ -171,49 +171,7 @@ class TableListResponse(BaseModel):
     )
 
 
-class PangenomeInfo(BaseModel):
-    """Information about a pangenome found in the SQLite file."""
-    pangenome_taxonomy: str | None = Field(None, description="Taxonomy of the pangenome", examples=["Escherichia coli"])
-    genome_count: int = Field(..., description="Number of genomes in the pangenome", examples=[42])
-    source_berdl_id: str = Field(..., description="Source BERDL Table ID", examples=["76990/7/2"])
-    user_genomes: list[str] = Field(
-        default_factory=list,
-        description="List of user-provided genome references",
-        examples=[["76990/1/1", "76990/2/1"]]
-    )
-    berdl_genomes: list[str] = Field(
-        default_factory=list,
-        description="List of BERDL/Datalake genome identifiers",
-        examples=[["GLM4:EC_G1", "GLM4:EC_G2"]]
-    )
-    handle_ref: str | None = Field(
-        None,
-        description="Blobstore handle reference for SQLite database",
-        examples=["KBH_248028"]
-    )
 
-
-class PangenomesResponse(BaseModel):
-    """Response for listing pangenomes from a BERDLTables object."""
-    berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
-    object_type: str | None = Field(None, description="KBase object type", examples=["KBaseGeneDataLakes.BERDLTables-1.0"])
-    pangenomes: list[PangenomeInfo] = Field(
-        default_factory=list,
-        description="List of available pangenomes",
-        examples=[[
-            {
-                "pangenome_taxonomy": "Escherichia coli",
-                "genome_count": 42,
-                "source_berdl_id": "76990/7/2",
-                "handle_ref": "KBH_248028"
-            }
-        ]]
-    )
-    pangenome_count: int = Field(
-        1,
-        description="Total number of pangenomes",
-        examples=[1]
-    )
 
 
 class TableDataResponse(BaseModel):
