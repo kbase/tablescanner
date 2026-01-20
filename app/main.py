@@ -9,12 +9,14 @@ Run with: uv run fastapi dev app/main.py
 
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import router
 from app.config import settings
+from app.exceptions import TableNotFoundError, InvalidFilterError
 
 
 def create_app() -> FastAPI:
@@ -95,7 +97,7 @@ def create_app() -> FastAPI:
     # This is necessary when viewer.html is opened from file:// or different origin
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.CORS_ORIGINS,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -103,6 +105,21 @@ def create_app() -> FastAPI:
 
     # Store settings in app state for access throughout the application
     app.state.settings = settings
+
+    # Exception Handlers
+    @app.exception_handler(TableNotFoundError)
+    async def table_not_found_handler(request: Request, exc: TableNotFoundError):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": str(exc)},
+        )
+
+    @app.exception_handler(InvalidFilterError)
+    async def invalid_filter_handler(request: Request, exc: InvalidFilterError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc)},
+        )
 
     # Include API routes
     app.include_router(router)

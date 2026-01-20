@@ -159,53 +159,64 @@ class StatisticsService:
                 logger.debug(f"Cache hit for statistics: {table_name}")
                 return cached_stats
         
-        # Get connection
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
-        
-        # Get row count
-        cursor.execute(f'SELECT COUNT(*) FROM "{table_name}"')
-        row_count = cursor.fetchone()[0]
-        
-        # Get column types
-        column_types = self.query_service.get_column_types(db_path, table_name)
-        
-        # Compute statistics for each column
-        column_stats_list = []
-        
-        for col_type in column_types:
-            stats = self._compute_column_statistics(
-                cursor, table_name, col_type, row_count
-            )
-            column_stats_list.append(stats)
-        
-        # Build response
-        result = {
-            "table": table_name,
-            "row_count": row_count,
-            "columns": [
-                {
-                    "column": stats.column,
-                    "type": stats.type,
-                    "null_count": stats.null_count,
-                    "distinct_count": stats.distinct_count,
-                    "min": stats.min,
-                    "max": stats.max,
-                    "mean": stats.mean,
-                    "median": stats.median,
-                    "stddev": stats.stddev,
-                    "sample_values": stats.sample_values
+        # Execute stats computation
+        try:
+            with self.pool.connection(db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get row count
+                cursor.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+                row_count = cursor.fetchone()[0]
+                
+                # Get column types (QueryService handles its own connection for this call, 
+                # but we're in StatisticsService, so we just call it.
+                # Wait, query_service.get_column_types uses the pool independently.
+                # This is fine, but slightly inefficient (opens 2 connections).
+                # However, since we are inside a thread (likely), pool might give us a new connection.
+                # Actually, `get_column_types` is short-lived.
+                # We can keep using it.
+                column_types = self.query_service.get_column_types(db_path, table_name)
+                
+                # Compute statistics for each column
+                column_stats_list = []
+                
+                for col_type in column_types:
+                    stats = self._compute_column_statistics(
+                        cursor, table_name, col_type, row_count
+                    )
+                    column_stats_list.append(stats)
+                
+                # Build response
+                result = {
+                    "table": table_name,
+                    "row_count": row_count,
+                    "columns": [
+                        {
+                            "column": stats.column,
+                            "type": stats.type,
+                            "null_count": stats.null_count,
+                            "distinct_count": stats.distinct_count,
+                            "min": stats.min,
+                            "max": stats.max,
+                            "mean": stats.mean,
+                            "median": stats.median,
+                            "stddev": stats.stddev,
+                            "sample_values": stats.sample_values
+                        }
+                        for stats in column_stats_list
+                    ],
+                    "last_updated": int(time.time() * 1000)  # Milliseconds since epoch
                 }
-                for stats in column_stats_list
-            ],
-            "last_updated": int(time.time() * 1000)  # Milliseconds since epoch
-        }
-        
-        # Cache result
-        if use_cache:
-            self.cache.set(cache_key, result, table_mtime)
-        
-        return result
+                
+                # Cache result
+                if use_cache:
+                    self.cache.set(cache_key, result, table_mtime)
+                
+                return result
+                
+        except sqlite3.Error as e:
+            logger.error(f"Error computing statistics for {table_name}: {e}")
+            raise
     
     def _compute_column_statistics(
         self,

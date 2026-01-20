@@ -47,10 +47,7 @@ class SchemaService:
         Returns:
             Dictionary with table schema information
         """
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
-        
-        # Get column information
+        # Get column schema using query service (which handles its own connection)
         column_types = self.query_service.get_column_types(db_path, table_name)
         
         columns = []
@@ -63,8 +60,15 @@ class SchemaService:
                 "dflt_value": col_type.dflt_value
             })
         
-        # Get indexes
-        indexes = self._get_table_indexes(cursor, table_name)
+        # Get indexes using direct connection
+        indexes = []
+        try:
+            with self.pool.connection(db_path) as conn:
+                cursor = conn.cursor()
+                indexes = self._get_table_indexes(cursor, table_name)
+        except sqlite3.Error as e:
+            logger.warning(f"Error getting indexes for {table_name}: {e}")
+            # We continue with empty indexes rather than failing the whole schema request
         
         return {
             "table": table_name,
@@ -85,8 +89,7 @@ class SchemaService:
         Returns:
             Dictionary mapping table names to schema information
         """
-        """
-        
+
         table_names = list_tables(db_path)
         schemas = {}
         

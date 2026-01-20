@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         default="appdev",
         description="KBase environment (appdev, ci, prod)"
     )
+    CORS_ORIGINS: list[str] = Field(
+        default=["*"],
+        description="List of allowed origins for CORS. Use ['*'] for all."
+    )
 
     # Root path for proxy deployment (e.g., "/services/berdl_table_scanner")
     ROOT_PATH: str = ""

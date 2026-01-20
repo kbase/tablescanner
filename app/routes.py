@@ -333,9 +333,7 @@ async def query_table_data(
             available = list_tables(db_path)
             raise ValueError(f"Table '{request.table_name}' not found. Available: {available}")
             
-        columns_list = None
-        if request.columns and request.columns != "all":
-            columns_list = [c.strip() for c in request.columns.split(",") if c.strip()]
+        # Column parsing is now handled in process_data_request for both string and list formats
         
         effective_sort_col = request.sort_column
         effective_sort_dir = request.sort_order
@@ -353,8 +351,10 @@ async def query_table_data(
             sort_column=effective_sort_col,
             sort_order=effective_sort_dir or "ASC",
             search_value=request.search_value,
-            columns=columns_list,
-            filters=filters,
+            columns=request.columns, # Now handles list or string
+            filters=request.filters if request.filters else filters, # Prefer advanced filters, fall back to legacy dict
+            aggregations=request.aggregations,
+            group_by=request.group_by,
             handle_ref_or_id=request.berdl_table_id
         )
         

@@ -4,6 +4,8 @@ from enum import Enum
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from app.config_constants import MAX_LIMIT
+
 
 # =============================================================================
 # REQUEST MODELS
@@ -22,10 +24,10 @@ class TableDataRequest(BaseModel):
         description="BERDLTables object reference",
         examples=["76990/ADPITest"]
     )
-    columns: str | None = Field(
+    columns: str | list[str] | None = Field(
         "all",
-        description="Comma-separated list of columns to select or 'all'",
-        examples=["gene_id, gene_name"]
+        description="Comma-separated list of columns to select or 'all', or list of strings",
+        examples=["gene_id, gene_name", ["gene_id", "gene_name"]]
     )
     col_filter: dict[str, str] | None = Field(
         None,
@@ -40,7 +42,7 @@ class TableDataRequest(BaseModel):
     limit: int = Field(
         100,
         ge=1,
-        le=500000,
+        le=MAX_LIMIT,
         description="Maximum rows to return"
     )
     offset: int = Field(
@@ -73,6 +75,20 @@ class TableDataRequest(BaseModel):
     kb_env: str = Field(
         "appdev",
         description="KBase environment"
+    )
+
+    # Advanced Features (System Overhaul)
+    filters: list[FilterRequest] | None = Field(
+        None, 
+        description="Advanced filter specifications"
+    )
+    aggregations: list[AggregationRequest] | None = Field(
+        None, 
+        description="Aggregation specifications"
+    )
+    group_by: list[str] | None = Field(
+        None, 
+        description="Columns for GROUP BY clause"
     )
 
     model_config = {
@@ -233,6 +249,40 @@ class TableDataResponse(BaseModel):
         description="KBase object type",
         examples=["KBaseGeneDataLakes.BERDLTables-1.0"]
     )
+    
+    # Enhanced Metadata (System Overhaul)
+    column_types: list[ColumnTypeInfo] | None = Field(
+        None, 
+        description="Column type information"
+    )
+    column_schema: list[ColumnTypeInfo] | None = Field(
+        None,
+        description="Alias for column_types (for compatibility)"
+    )
+    query_metadata: QueryMetadata | None = Field(
+        None, 
+        description="Query execution metadata"
+    )
+    cached: bool = Field(
+        False, 
+        description="Whether result was from cache"
+    )
+    execution_time_ms: float | None = Field(
+        None, 
+        description="Query execution time in milliseconds (alias for response_time_ms)"
+    )
+    limit: int | None = Field(
+        None, 
+        description="Limit applied"
+    )
+    offset: int | None = Field(
+        None, 
+        description="Offset applied"
+    )
+    database_path: str | None = Field(
+        None, 
+        description="Path to database file"
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -346,7 +396,7 @@ class TableDataQueryRequest(BaseModel):
     """Enhanced table data query request for DataTables Viewer API."""
     berdl_table_id: str = Field(..., description="Database identifier (local/db_name format)")
     table_name: str = Field(..., description="Table name")
-    limit: int = Field(100, ge=1, le=500000, description="Maximum rows to return")
+    limit: int = Field(100, ge=1, le=MAX_LIMIT, description="Maximum rows to return")
     offset: int = Field(0, ge=0, description="Number of rows to skip")
     columns: list[str] | None = Field(None, description="List of columns to select (None = all)")
     sort_column: str | None = Field(None, description="Column to sort by")
@@ -363,7 +413,7 @@ class AggregationQueryRequest(BaseModel):
     group_by: list[str] = Field(..., description="Columns for GROUP BY")
     aggregations: list[AggregationRequest] = Field(..., description="Aggregation specifications")
     filters: list[FilterRequest] | None = Field(None, description="Filter specifications")
-    limit: int = Field(100, ge=1, le=500000, description="Maximum rows to return")
+    limit: int = Field(100, ge=1, le=MAX_LIMIT, description="Maximum rows to return")
     offset: int = Field(0, ge=0, description="Number of rows to skip")
 
 

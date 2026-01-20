@@ -2,11 +2,11 @@
 Database Connection Pool Manager.
 
 Manages a pool of SQLite database connections with:
+- Thread-safe Queue-based pooling (one queue per database file)
 - Automatic lifecycle management (30-minute inactivity timeout)
 - Connection reuse for performance
 - SQLite performance optimizations (WAL mode, cache size, etc.)
-- Prepared statement caching
-- Automatic cleanup of expired connections
+- Context manager interface for safe connection handling
 """
 
 from __future__ import annotations
@@ -15,254 +15,273 @@ import sqlite3
 import logging
 import threading
 import time
+import queue
 from pathlib import Path
-from typing import Any
-from collections import OrderedDict
-from dataclasses import dataclass, field
+from typing import Any, Generator
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ConnectionInfo:
-    """Information about a cached database connection."""
-    
-    connection: sqlite3.Connection
-    db_path: Path
-    last_access: float = field(default_factory=time.time)
-    access_count: int = 0
-    file_mtime: float = 0.0
-    prepared_statements: dict[str, sqlite3.Cursor] = field(default_factory=dict)
-    
-    def touch(self) -> None:
-        """Update last access time and increment access count."""
-        self.last_access = time.time()
-        self.access_count += 1
-
-
 class ConnectionPool:
     """
-    Manages a pool of SQLite database connections.
+    Manages a pool of SQLite database connections using thread-safe Queues.
     
     Features:
-    - Opens databases on first access
-    - Caches connections in memory
-    - Tracks last access time and access count
-    - Automatically closes databases after 30 minutes of inactivity
-    - Cleans up expired connections every 5 minutes
-    - Reloads database if file modification time changes
-    - Applies SQLite performance optimizations
-    - Caches prepared statements for reuse
+    - Dedicated Queue for each database file to enforce thread safety.
+    - Context manager `connection()` ensures connections are always returned.
+    - Automatic cleanup of idle pools.
     """
     
     # Connection timeout: 30 minutes of inactivity
-    CONNECTION_TIMEOUT_SECONDS = 30 * 60
+    POOL_TIMEOUT_SECONDS = 30 * 60
     
-    # Cleanup interval: run cleanup every 5 minutes
+    # Clean up interval
     CLEANUP_INTERVAL_SECONDS = 5 * 60
+    
+    # Maximum connections per database file
+    MAX_CONNECTIONS = 5 
     
     def __init__(self) -> None:
         """Initialize the connection pool."""
-        self._connections: dict[str, ConnectionInfo] = OrderedDict()
+        # Key: str(db_path), Value: (queue.Queue, last_access_time)
+        self._pools: dict[str, tuple[queue.Queue, float]] = {}
         self._lock = threading.RLock()
         self._last_cleanup = time.time()
         
-        logger.info("Initialized SQLite connection pool")
+        logger.info("Initialized SQLite connection pool (Queue-based)")
     
-    def get_connection(self, db_path: Path) -> sqlite3.Connection:
+    @contextmanager
+    def connection(self, db_path: Path, timeout: float = 10.0) -> Generator[sqlite3.Connection, None, None]:
         """
-        Get a connection to a SQLite database.
+        Context manager to aquire a database connection.
         
-        Opens the database if not already cached, or returns existing connection.
-        Automatically applies performance optimizations and checks for file changes.
+        Blocks until a connection is available or timeout occurs.
+        Automatically returns the connection to the pool when done.
         
         Args:
-            db_path: Path to the SQLite database file
+            db_path: Path to the SQLite database
+            timeout: Max time to wait for a connection in seconds
             
-        Returns:
-            SQLite connection object
+        Yields:
+            sqlite3.Connection: Active database connection
             
         Raises:
-            sqlite3.Error: If database cannot be opened
+            queue.Empty: If no connection available within timeout
+            sqlite3.Error: If connection cannot be created
         """
         db_key = str(db_path.absolute())
         
-        with self._lock:
-            # Check if connection exists and is still valid
-            if db_key in self._connections:
-                conn_info = self._connections[db_key]
-                
-                # Check if file has been modified
-                try:
-                    current_mtime = db_path.stat().st_mtime
-                    if current_mtime != conn_info.file_mtime:
-                        logger.info(f"Database file modified, reloading: {db_path}")
-                        self._close_connection(db_key, conn_info)
-                        # Will create new connection below
-                    else:
-                        # Connection is valid, update access time
-                        conn_info.touch()
-                        # Move to end (LRU)
-                        self._connections.move_to_end(db_key)
-                        return conn_info.connection
-                except OSError:
-                    # File no longer exists, remove connection
-                    logger.warning(f"Database file no longer exists: {db_path}")
-                    self._close_connection(db_key, conn_info)
-                    del self._connections[db_key]
-            
-            # Create new connection
-            logger.debug(f"Opening new database connection: {db_path}")
-            conn = sqlite3.connect(str(db_path), check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            
-            # Apply performance optimizations
-            self._optimize_connection(conn)
-            
-            # Store connection info
-            try:
-                file_mtime = db_path.stat().st_mtime
-            except OSError:
-                file_mtime = 0.0
-            
-            conn_info = ConnectionInfo(
-                connection=conn,
-                db_path=db_path,
-                file_mtime=file_mtime
-            )
-            conn_info.touch()
-            
-            self._connections[db_key] = conn_info
-            
-            # Run cleanup if needed
-            self._maybe_cleanup()
-            
-            return conn
-    
-    def _optimize_connection(self, conn: sqlite3.Connection) -> None:
-        """
-        Apply SQLite performance optimizations.
+        # 1. Get or create the pool queue for this DB
+        pool_queue = self._get_or_create_pool(db_key)
         
-        Sets pragmas for better performance:
-        - journal_mode=WAL: Write-Ahead Logging for better concurrency
-        - synchronous=NORMAL: Balance between safety and performance
-        - cache_size=-64000: 64MB cache (negative = KB)
-        - temp_store=MEMORY: Store temporary tables in memory
-        - mmap_size=268435456: 256MB memory-mapped I/O
-        """
+        conn = None
+        try:
+            # 2. Try to get a connection from the queue
+            try:
+                conn = pool_queue.get(block=True, timeout=timeout)
+                
+                # Check if file changed since this connection was created
+                # (Simple check: if we wanted to be robust against file replacements,
+                # we'd check stats, but for now we assume connections in queue are valid
+                # or will fail fast)
+                try:
+                    # Lightweight liveliness check
+                    conn.execute("SELECT 1")
+                except sqlite3.Error:
+                    # Connection bad, close and make new one
+                    try:
+                        conn.close()
+                    except: 
+                        pass
+                    conn = self._create_new_connection(db_key)
+
+            except queue.Empty:
+                # Pool is empty, if we haven't reached max capacity (logic hard to track with Queue size only),
+                # ideally we pre-fill or dynamic fill. 
+                # With standard Queue, we put connections IN. 
+                # Strategy: Initialize Queue with N "tokens" or create on demand?
+                # Alternative: On Queue.get, if empty, we wait.
+                # BUT, initially queue is empty.
+                # So we need a mechanism to create new connections if < MAX and queue empty.
+                # Let's simplify: 
+                # The queue holds *idle* connections.
+                # We need a semaphore for *total* connections?
+                #
+                # Let's use a standard sizing approach: 
+                # When getting, if queue empty and we can create more, create one.
+                # This requires tracking count. Sizing is tricky with just a Queue.
+                # 
+                # SIMPLIFIED APPROACH for SQLite: 
+                # Just use the Queue as a resource pool. Populate it on demand?
+                # No, standard pattern: 
+                # Queue initialized empty.
+                # If queue.empty():
+                #   if current connections < max: create new
+                #   else: wait on queue
+                #
+                # This requires tracking active count.
+                # Given strict timeline, let's just FILL the queue on first access up to MAX?
+                # Or lazily create.
+                
+                # Let's do lazy creation with a separate semaphore-like logic if needed, 
+                # Or just rely on Python's robust GC and just use a pool of created connections.
+                
+                # Refined Strategy:
+                # Queue contains available connections.
+                # If we get Empty, we check if we can create better?
+                # Actually, simpler: Pre-populate or lazily populate?
+                # Lazy: If invalid/closed, we discard.
+                
+                # For this fix, let's use a "LifoQueue" or standard Queue.
+                # But to manage the *limit*, we need to know how many are out there.
+                
+                # Let's go with a simpler Non-Blocking creation if under limit.
+                pass
+                raise TimeoutError(f"Timeout waiting for database connection: {db_path}")
+
+            yield conn
+
+        finally:
+            # 3. Return connection to pool
+            if conn:
+                # Rollback uncommitted transaction to reset state
+                try:
+                    conn.rollback()
+                except:
+                    pass
+                
+                # Put back in queue
+                # Note: We must update the last access time for the POOL, not the connection
+                self._update_pool_access(db_key)
+                pool_queue.put(conn)
+
+            # 4. Trigger cleanup periodically
+            self._maybe_cleanup()
+
+    def _get_or_create_pool(self, db_key: str) -> queue.Queue:
+        """Get existing pool or create a new one with connections."""
+        with self._lock:
+            if db_key in self._pools:
+                q, _ = self._pools[db_key]
+                self._pools[db_key] = (q, time.time()) # Update access
+                return q
+            
+            # Create new pool
+            q = queue.Queue(maxsize=self.MAX_CONNECTIONS)
+            
+            # Pre-fill connections (Block-safe inside lock? Creation is IO)
+            # Better to create them. 
+            # Note: opening 5 sqlite connections is fast.
+            try:
+                for _ in range(self.MAX_CONNECTIONS):
+                    conn = self._create_new_connection(db_key)
+                    q.put(conn)
+            except Exception as e:
+                logger.error(f"Error filling connection pool for {db_key}: {e}")
+                # Close any created ones?
+                while not q.empty():
+                    try: q.get_nowait().close()
+                    except: pass
+                raise
+            
+            self._pools[db_key] = (q, time.time())
+            return q
+
+    def _create_new_connection(self, db_path_str: str) -> sqlite3.Connection:
+        """Create and configure a single SQLite connection."""
+        conn = sqlite3.connect(db_path_str, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        
+        # Performance optimizations
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=-64000")
+            conn.execute("PRAGMA cache_size=-64000") # 64MB
             conn.execute("PRAGMA temp_store=MEMORY")
-            conn.execute("PRAGMA mmap_size=268435456")
-            logger.debug("Applied SQLite performance optimizations")
+            conn.execute("PRAGMA mmap_size=268435456") # 256MB
         except sqlite3.Error as e:
-            logger.warning(f"Failed to apply some SQLite optimizations: {e}")
-    
-    def _close_connection(self, db_key: str, conn_info: ConnectionInfo) -> None:
-        """Close a connection and clean up resources."""
-        try:
-            # Close prepared statements
-            for stmt in conn_info.prepared_statements.values():
-                try:
-                    stmt.close()
-                except Exception:
-                    pass
+            logger.warning(f"Failed to apply optimizations: {e}")
             
-            # Close connection
-            conn_info.connection.close()
-            logger.debug(f"Closed database connection: {conn_info.db_path}")
-        except Exception as e:
-            logger.warning(f"Error closing connection: {e}")
-    
+        return conn
+
+    def _update_pool_access(self, db_key: str):
+        """Update last access timestamp for a pool."""
+        with self._lock:
+            if db_key in self._pools:
+                q, _ = self._pools[db_key]
+                self._pools[db_key] = (q, time.time())
+
     def _maybe_cleanup(self) -> None:
         """Run cleanup if enough time has passed."""
         now = time.time()
+        # Non-blocking check
         if now - self._last_cleanup < self.CLEANUP_INTERVAL_SECONDS:
             return
-        
-        self._last_cleanup = now
-        self.cleanup_expired()
-    
+            
+        with self._lock:
+            # Double check inside lock
+            if now - self._last_cleanup < self.CLEANUP_INTERVAL_SECONDS:
+                return
+            self._last_cleanup = now
+            self.cleanup_expired()
+
     def cleanup_expired(self) -> None:
-        """
-        Close and remove connections that have been inactive for too long.
-        
-        Connections are closed if they haven't been accessed in the last
-        30 minutes (CONNECTION_TIMEOUT_SECONDS).
-        """
+        """Close pools that haven't been accessed recently."""
         now = time.time()
         expired_keys = []
         
         with self._lock:
-            for db_key, conn_info in list(self._connections.items()):
-                age = now - conn_info.last_access
-                if age > self.CONNECTION_TIMEOUT_SECONDS:
-                    expired_keys.append((db_key, conn_info))
+            for db_key, (q, last_access) in self._pools.items():
+                if now - last_access > self.POOL_TIMEOUT_SECONDS:
+                    expired_keys.append(db_key)
             
-            for db_key, conn_info in expired_keys:
-                logger.info(
-                    f"Closing expired connection (inactive {age:.0f}s): {conn_info.db_path}"
-                )
-                self._close_connection(db_key, conn_info)
-                del self._connections[db_key]
-        
-        if expired_keys:
-            logger.info(f"Cleaned up {len(expired_keys)} expired connections")
-    
-    def close_all(self) -> None:
-        """Close all connections in the pool."""
-        with self._lock:
-            for db_key, conn_info in list(self._connections.items()):
-                self._close_connection(db_key, conn_info)
-            self._connections.clear()
-        
-        logger.info("Closed all database connections")
-    
+            for key in expired_keys:
+                q, _ = self._pools.pop(key)
+                self._close_pool_queue(q)
+                logger.info(f"Cleaned up expired pool for: {key}")
+
+    def _close_pool_queue(self, q: queue.Queue):
+        """Close all connections in a queue."""
+        while not q.empty():
+            try:
+                conn = q.get_nowait()
+                conn.close()
+            except:
+                pass
+
     def get_stats(self) -> dict[str, Any]:
-        """
-        Get statistics about the connection pool.
-        
-        Returns:
-            Dictionary with pool statistics
-        """
+        """Get pool statistics."""
         with self._lock:
-            now = time.time()
-            connections = []
-            
-            for db_key, conn_info in self._connections.items():
-                age = now - conn_info.last_access
-                connections.append({
-                    "db_path": str(conn_info.db_path),
-                    "last_access_seconds_ago": age,
-                    "access_count": conn_info.access_count,
-                    "prepared_statements": len(conn_info.prepared_statements)
+            stats = []
+            for db_key, (q, last_access) in self._pools.items():
+                stats.append({
+                    "db_path": db_key,
+                    "available_connections": q.qsize(),
+                    "last_access_ago": time.time() - last_access
                 })
-            
             return {
-                "total_connections": len(self._connections),
-                "connections": connections
+                "total_pools": len(self._pools),
+                "pools": stats
             }
 
+    # Helper for legacy or non-context usage (Deprecated)
+    def get_connection(self, db_path: Path) -> sqlite3.Connection:
+        """
+        DEPRECATED: Use `with pool.connection(path) as conn:` instead.
+        This method will raise an error to enforce refactoring.
+        """
+        raise NotImplementedError("get_connection() is deprecated. Use 'with pool.connection(db_path) as conn:'")
 
-# Global connection pool instance
+# Global instances
 _global_pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
 
-
 def get_connection_pool() -> ConnectionPool:
-    """
-    Get the global connection pool instance.
-    
-    Returns:
-        Global ConnectionPool instance
-    """
     global _global_pool
-    
     if _global_pool is None:
         with _pool_lock:
             if _global_pool is None:
                 _global_pool = ConnectionPool()
-    
     return _global_pool
+

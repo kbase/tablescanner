@@ -170,30 +170,30 @@ class QueryService:
         """
         Get column type information from table schema.
         """
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
-        
         try:
-            # Validate table existence
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            if not cursor.fetchone():
-                raise TableNotFoundError(table_name)
-
-            cursor.execute(f"PRAGMA table_info(\"{table_name}\")")
-            rows = cursor.fetchall()
-            
-            column_types = []
-            for row in rows:
-                # PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
-                column_types.append(ColumnType(
-                    name=row[1],
-                    type=row[2] or "TEXT",  # Default to TEXT if type is NULL
-                    notnull=bool(row[3]),
-                    pk=bool(row[5]),
-                    dflt_value=row[4]
-                ))
-            
-            return column_types
+            with self.pool.connection(db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Validate table existence
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+                if not cursor.fetchone():
+                    raise TableNotFoundError(table_name)
+    
+                cursor.execute(f"PRAGMA table_info(\"{table_name}\")")
+                rows = cursor.fetchall()
+                
+                column_types = []
+                for row in rows:
+                    # PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+                    column_types.append(ColumnType(
+                        name=row[1],
+                        type=row[2] or "TEXT",  # Default to TEXT if type is NULL
+                        notnull=bool(row[3]),
+                        pk=bool(row[5]),
+                        dflt_value=row[4]
+                    ))
+                
+                return column_types
         
         except sqlite3.Error as e:
             logger.error(f"Error getting column types: {e}")
@@ -207,22 +207,26 @@ class QueryService:
         return any(numeric_type in type_upper for numeric_type in ["INT", "REAL", "NUMERIC"])
     
     def convert_numeric_value(self, value: Any, column_type: str) -> float | int:
-        """Convert a value to numeric type based on column type."""
+        """
+        Convert a value to numeric type based on column type.
+        
+        Raises:
+            ValueError: If value cannot be converted to the target numeric type
+        """
         if value is None:
             return 0
         
         type_upper = column_type.upper()
         
-        if "INT" in type_upper:
-            try:
+        # Strict validation: prevent text->0 coercion
+        try:
+            if "INT" in type_upper:
                 return int(float(str(value)))
-            except (ValueError, TypeError):
-                return 0
-        else:
-            try:
+            else:
                 return float(str(value))
-            except (ValueError, TypeError):
-                return 0.0
+        except (ValueError, TypeError):
+            # Re-raise with clear message instead of returning 0
+            raise ValueError(f"Invalid numeric value '{value}' for column type '{column_type}'")
     
     def ensure_index(self, db_path: Path, table_name: str, column: str) -> None:
         """Ensure an index exists on a column. Optimized with in-memory cache."""
@@ -234,18 +238,17 @@ class QueryService:
                 if time.time() - self._index_cache[cache_key] < INDEX_CACHE_TTL:
                     return
 
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
-        
         try:
-            index_name = f"idx_{table_name}_{column}".replace(" ", "_").replace("-", "_")
-            safe_table = f'"{table_name}"'
-            safe_column = f'"{column}"'
-            
-            cursor.execute(
-                f'CREATE INDEX IF NOT EXISTS "{index_name}" ON {safe_table}({safe_column})'
-            )
-            conn.commit()
+            with self.pool.connection(db_path) as conn:
+                cursor = conn.cursor()
+                index_name = f"idx_{table_name}_{column}".replace(" ", "_").replace("-", "_")
+                safe_table = f'"{table_name}"'
+                safe_column = f'"{column}"'
+                
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS "{index_name}" ON {safe_table}({safe_column})'
+                )
+                conn.commit()
             
             with self._index_lock:
                 self._index_cache[cache_key] = time.time()
@@ -254,41 +257,52 @@ class QueryService:
             logger.warning(f"Error creating index on {table_name}.{column}: {e}")
     
     def ensure_fts5_table(self, db_path: Path, table_name: str, text_columns: list[str]) -> bool:
-        """Ensure FTS5 virtual table exists for full-text search."""
+        """
+        Ensure FTS5 virtual table exists for full-text search.
+        
+        Safety: Skips creation if table is too large (>100k rows) to prevent
+        blocking the request thread for too long.
+        """
         if not text_columns:
             return False
             
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
-        
         try:
-            fts5_table_name = f"{table_name}_fts5"
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (fts5_table_name,))
-            if cursor.fetchone():
-                return True
-            
-            # Check capabilities
-            cursor.execute("PRAGMA compile_options")
-            if "ENABLE_FTS5" not in [row[0] for row in cursor.fetchall()]:
-                return False
+            with self.pool.connection(db_path) as conn:
+                cursor = conn.cursor()
                 
-            safe_columns = ", ".join(f'"{col}"' for col in text_columns)
-            cursor.execute(f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS "{fts5_table_name}" 
-                USING fts5({safe_columns}, content="{table_name}", content_rowid="rowid")
-            """)
-            
-            # Populate
-            cursor.execute(f"PRAGMA table_info(\"{table_name}\")")
-            # If table has integer PK, use it as rowid implicitly
-            
-            cursor.execute(f"""
-                INSERT INTO "{fts5_table_name}"(rowid, {safe_columns})
-                SELECT rowid, {safe_columns} FROM "{table_name}"
-            """)
-            
-            conn.commit()
-            return True
+                fts5_table_name = f"{table_name}_fts5"
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (fts5_table_name,))
+                if cursor.fetchone():
+                    return True
+                
+                # Check capabilities
+                cursor.execute("PRAGMA compile_options")
+                if "ENABLE_FTS5" not in [row[0] for row in cursor.fetchall()]:
+                    return False
+    
+                # SAFETY CHECK: Row count limit
+                # Creating FTS5 index copies all data. For large tables, this is a heavy operation.
+                cursor.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+                row_count = cursor.fetchone()[0]
+                if row_count > 100000:
+                    logger.warning(f"Skipping FTS5 creation for large table '{table_name}' ({row_count} rows)")
+                    return False
+                    
+                safe_columns = ", ".join(f'"{col}"' for col in text_columns)
+                cursor.execute(f"""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS "{fts5_table_name}" 
+                    USING fts5({safe_columns}, content="{table_name}", content_rowid="rowid")
+                """)
+                
+                # Populate
+                # If table has integer PK, use it as rowid implicitly
+                cursor.execute(f"""
+                    INSERT INTO "{fts5_table_name}"(rowid, {safe_columns})
+                    SELECT rowid, {safe_columns} FROM "{table_name}"
+                """)
+                
+                conn.commit()
+                return True
         except sqlite3.Error:
             return False
 
@@ -333,7 +347,9 @@ class QueryService:
                     continue
                 
                 alias = agg.alias or f"{agg.function}_{agg.column}"
-                safe_alias = alias.replace('"', '') 
+                # Sanitize alias to prevent injection/bad chars
+                alias = alias.replace('"', '').replace("'", "")
+                safe_alias = alias
                 select_parts.append(f'{expr} AS "{safe_alias}"')
                 headers.append(safe_alias)
             
@@ -351,10 +367,6 @@ class QueryService:
                     select_parts = valid_cols
                 else:
                     select_parts = ["*"]
-                    # If columns were requested but none valid, we return all? 
-                    # Existing logic implies strict checking but fallback to * if empty list?
-                    # The legacy logic: if columns list provided, only use valid ones. If none valid, maybe *?
-                    # Let's assume if columns is empty list, we default to *
             else:
                  select_parts = ["*"]
                  headers = list(column_types.keys())
@@ -381,6 +393,7 @@ class QueryService:
                 if not self.is_numeric_column(col.type)
             ]
             
+            # Note: ensures FTS5 table is ready. This might skip if table is large.
             if text_columns and self.ensure_fts5_table(db_path, table_name, text_columns):
                 fts5_table = f"{table_name}_fts5"
                 where_conditions.append(
@@ -410,7 +423,12 @@ class QueryService:
         column_types: dict[str, ColumnType],
         params: list[Any]
     ) -> str:
-        """Build SQL condition for a single filter."""
+        """
+        Build SQL condition for a single filter.
+        
+        Raises:
+            InvalidFilterError: If filter parameters are unsafe (e.g. too many IN values)
+        """
         column = filter_spec.column
         operator = filter_spec.operator.lower()
         value = filter_spec.value
@@ -431,6 +449,11 @@ class QueryService:
         if value is None:
             return ""
         
+        # Check variable limits for array operators
+        if operator in ["in", "not_in"] and isinstance(value, list):
+            if len(value) > 900:
+                raise InvalidFilterError(f"Too many values for IN operator: {len(value)}. Max is 900.")
+
         # Numeric handling
         if is_numeric and operator in ["eq", "ne", "gt", "gte", "lt", "lte", "between", "in", "not_in"]:
             if operator == "between":
@@ -502,11 +525,9 @@ class QueryService:
                 return cached
         
         # 2. Schema & Validation
+        # This calls get_column_types internally which uses the pool correctly now
         column_types_list = self.get_column_types(db_path, table_name)
         column_types_map = {col.name: col for col in column_types_list}
-        
-        conn = self.pool.get_connection(db_path)
-        cursor = conn.cursor()
         
         # 3. Indices
         if filters:
@@ -541,19 +562,22 @@ class QueryService:
         limit_clause = f" LIMIT {int(limit)}"
         offset_clause = f" OFFSET {int(offset)}" if offset > 0 else ""
         
-        # 5. Execution
-        # Count Query
-        count_query = f'SELECT COUNT(*) FROM "{table_name}"{where_clause}'
-        cursor.execute(count_query, where_params)
-        total_count = cursor.fetchone()[0]
-        
-        # Data Query
-        query = f'SELECT {select_clause} FROM "{table_name}"{where_clause}{group_by_clause}{order_by_clause}{limit_clause}{offset_clause}'
-        
-        start_time = time.time()
-        cursor.execute(query, where_params)
-        rows = cursor.fetchall()
-        execution_time_ms = (time.time() - start_time) * 1000
+        # 5. Execution - Use the connection context manager
+        with self.pool.connection(db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Count Query
+            count_query = f'SELECT COUNT(*) FROM "{table_name}"{where_clause}'
+            cursor.execute(count_query, where_params)
+            total_count = cursor.fetchone()[0]
+            
+            # Data Query
+            query = f'SELECT {select_clause} FROM "{table_name}"{where_clause}{group_by_clause}{order_by_clause}{limit_clause}{offset_clause}'
+            
+            start_time = time.time()
+            cursor.execute(query, where_params)
+            rows = cursor.fetchall()
+            execution_time_ms = (time.time() - start_time) * 1000
         
         # 6. Formatting
         data = [[str(val) if val is not None else "" for val in row] for row in rows]
@@ -619,3 +643,4 @@ def get_query_service() -> QueryService:
             if _query_service is None:
                 _query_service = QueryService()
     return _query_service
+

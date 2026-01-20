@@ -19,13 +19,35 @@ def sanitize_id(id_string: str) -> str:
     """
     Sanitize an ID string for use as a filesystem path.
     
+    Uses a strict allow-list approach to prevent path traversal.
+    Only allows alphanumeric characters, underscores, hyphens, and dots.
+    
     Args:
-        id_string: Raw ID (may contain / : and other special chars)
+        id_string: Raw ID
         
     Returns:
         Safe string for filesystem use
     """
-    return id_string.replace("/", "_").replace(":", "_").replace(" ", "_")
+    import re
+    # First replace common separators with underscore to maintain readability
+    # (e.g. "123/4" -> "123_4")
+    safe = id_string.replace("/", "_").replace("\\", "_").replace(":", "_").replace(" ", "_")
+    
+    # Remove any characters that aren't allowed (strict allow-list)
+    # Allowed: a-z, A-Z, 0-9, -, _, .
+    safe = re.sub(r"[^a-zA-Z0-9_.-]", "", safe)
+    
+    # Prevent empty strings
+    if not safe:
+        # Fallback for completely invalid IDs
+        import hashlib
+        return hashlib.md5(id_string.encode()).hexdigest()
+        
+    # Prevent specific directory traversal names if they somehow remain
+    if safe in (".", ".."):
+        safe = safe + "_safe"
+        
+    return safe
 
 
 def get_upa_cache_path(
