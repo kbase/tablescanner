@@ -5,7 +5,7 @@ Loads configuration from environment variables and .env file.
 All KBase service URLs and authentication settings are managed here.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     
     Create a .env file based on .env.example to configure locally.
     """
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
 
     # ==========================================================================
     # AUTHENTICATION
@@ -80,11 +86,6 @@ class Settings(BaseSettings):
         default=10.0,
         description="Timeout in seconds for KBase API calls"
     )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
 
 
 # Global settings instance - loaded at module import

@@ -487,3 +487,11 @@ class HealthResponse(BaseModel):
     data_dir: str = Field(..., description="Data directory path")
     config_dir: str = Field(..., description="Config directory path")
     cache: dict[str, Any] = Field(..., description="Cache information")
+
+
+class UploadDBResponse(BaseModel):
+    """Response for database upload."""
+    handle: str = Field(..., description="Handle for the uploaded database (e.g., local:uuid)")
+    filename: str = Field(..., description="Original filename")
+    size_bytes: int = Field(..., description="Size of the uploaded file in bytes")
+    message: str = Field(..., description="Status message")

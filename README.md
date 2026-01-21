@@ -4,151 +4,126 @@ TableScanner is a production-grade microservice for querying tabular data from K
 
 ## Features
 
-- **Data Access**: Query SQLite databases from KBase objects and handles
-- **Type-Aware Filtering**: Automatic numeric conversion for proper filtering
-- **Advanced Operators**: Support for eq, ne, gt, gte, lt, lte, like, ilike, in, not_in, between, is_null, is_not_null
-- **Aggregations**: GROUP BY support with count, sum, avg, min, max, stddev, variance, distinct_count
-- **Full-Text Search**: FTS5 support with automatic virtual table creation
-- **Performance**: Connection pooling, query caching, automatic indexing
-- **Statistics**: Pre-computed column statistics (min, max, mean, median, stddev)
-- **Schema Information**: Detailed table and column schema with indexes
+- **Data Access**: Query SQLite databases from KBase objects and handles.
+- **Local Uploads**: Upload local SQLite files (`.db`, `.sqlite`) for temporary access and testing.
+- **User-Driven Auth**: Secure access where each user provides their own KBase token.
+- **Type-Aware Filtering**: Automatic numeric conversion for proper filtering results.
+- **Advanced Operators**: Support for `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `not_in`, `between`, `is_null`, `is_not_null`.
+- **Aggregations**: `GROUP BY` support with `count`, `sum`, `avg`, `min`, `max`, `stddev`, `variance`, `distinct_count`.
+- **Table Statistics**: Rich column statistics including null counts, distinct counts, min/max/mean, and sample values.
+- **Full-Text Search**: FTS5 support with automatic virtual table creation.
+- **Automatic Operations**: Lifecycle management for connection pooling, query caching, and automatic disk cleanup.
 
 ## Quick Start
 
-### Production
+### Production (Docker)
 
 ```bash
 docker compose up --build -d
 ```
-
-The service will be available at `http://localhost:8000`. API documentation is at `/docs`.
+The service will be available at `http://localhost:8000`. API documentation is available at `/docs`.
 
 ### Development
 
 ```bash
 cp .env.example .env
-# Edit .env and set KB_SERVICE_AUTH_TOKEN
+# Edit .env and set local development parameters
 ./scripts/dev.sh
 ```
 
-The helper script `scripts/dev.sh` automates the environment setup:
-1. Activates the virtual environment (`.venv` or `venv`)
-2. Loads environment variables from `.env`
-3. Sets `PYTHONPATH`
-4. Starts the FastAPI development server with hot-reload via `fastapi dev`
+## Authentication
 
-## API Usage
+**Each user must provide their own KBase authentication token.** The service prioritizes user-provided tokens over shared service tokens.
 
-### List Tables
+- **Header (Recommended)**: `Authorization: Bearer <token>`
+- **Cookie**: `kbase_session=<token>` (Used by DataTables Viewer)
+- **Legacy Fallback**: `KB_SERVICE_AUTH_TOKEN` in `.env` is for **local testing only**.
+
+## API Usage Examples
+
+### 1. Upload a Local Database
+Upload a SQLite file to receive a temporary handle.
+
+```bash
+curl -X POST "http://localhost:8000/upload" \
+     -F "file=@/path/to/my_data.db"
+# Returns: {"handle": "local:a1b2-c3d4", ...}
+```
+
+### 2. List Tables
+Works with KBase UPA or the local handle returned above.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
      "http://localhost:8000/object/76990/7/2/tables"
 ```
 
-### Query Table Data
+### 3. Get Table Statistics
+Retrieve detailed column metrics and sample values.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/tables/Genes/data?limit=10"
+     "http://localhost:8000/object/76990/7/2/tables/Genes/stats"
 ```
 
-### Enhanced Query with Filters
+### 4. Advanced Query (POST)
+Comprehensive filtering and pagination.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-       "berdl_table_id": "local/76990_7_2",
+       "berdl_table_id": "76990/7/2",
        "table_name": "Genes",
        "limit": 100,
        "filters": [
-         {"column": "contigs", "operator": "gt", "value": "50"}
+         {"column": "gene_length", "operator": "gt", "value": 1000}
        ]
      }' \
      "http://localhost:8000/table-data"
 ```
 
-### Aggregation Query
+## Performance & Optimization
 
-```bash
-curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "group_by": ["category"],
-       "aggregations": [
-         {"column": "value", "function": "sum", "alias": "total"}
-       ]
-     }' \
-     "http://localhost:8000/api/aggregate/local/76990_7_2/tables/Data"
-```
+- **Connection Pooling**: Reuses database connections for up to 10 minutes of inactivity.
+- **Automatic Cleanup**: Expired caches are purged on startup. Uploaded databases automatically expire after **1 hour**.
+- **Query Caching**: 5-minute TTL, max 1000 entries per instance.
+- **Atomic Renaming**: Ensures file integrity during downloads and uploads.
 
 ## Documentation
 
 - **[API Reference](docs/API.md)** - Complete API documentation with examples
 - **[Architecture Dictionary](docs/ARCHITECTURE.md)** - System design and technical overview
+- **[Deployment Readiness](docs/internal/DEPLOYMENT_READINESS.md)** - Checklist for production deployment
 - **[Contributing Guide](docs/CONTRIBUTING.md)** - Setup, testing, and contribution guidelines
 
-## Architecture
+## Testing
 
-TableScanner operates as a bridge between KBase storage and client applications:
+```bash
+# Set PYTHONPATH and run all tests
+PYTHONPATH=. pytest
 
-1. **Data Fetching**: Retrieves SQLite databases from KBase Blobstore
-2. **Local Caching**: Stores databases locally to avoid repeated downloads
-3. **Connection Pooling**: Manages database connections with automatic lifecycle
-4. **Query Execution**: Type-aware filtering with automatic numeric conversion
-5. **Performance**: Query caching, automatic indexing, SQLite optimizations
-6. **API Layer**: FastAPI application with comprehensive endpoints
+# Run integration tests for local upload
+PYTHONPATH=. pytest tests/integration/test_local_upload.py
+```
 
 ## Project Structure
 
 ```
 TableScanner/
 ├── app/
-│   ├── main.py              # FastAPI application
-│   ├── routes.py            # API endpoints
-│   ├── models.py            # Pydantic models
-│   ├── config.py            # Configuration settings
+│   ├── main.py              # FastAPI application & Lifecycle handlers
+│   ├── routes.py            # API endpoints & Auth logic
+│   ├── models.py            # Pydantic (V2) models
+│   ├── config.py            # Configuration (BaseSettings)
 │   ├── services/
-│   │   ├── data/
-│   │   │   ├── connection_pool.py    # Connection pooling
-│   │   │   ├── query_service.py      # Query execution
-│   │   │   └── ...
-│   │   └── db_helper.py     # Database resolution
-│   └── utils/               # Utilities (SQLite, KBase Client)
-├── docs/                    # Documentation (API, Architecture, Contributing)
-├── tests/                   # Test suite (Unit & Integration)
-├── scripts/                 # Helper scripts (dev.sh)
-└── static/                  # Static files
-```
-
-## Configuration
-
-Create a `.env` file with:
-
-```env
-KB_SERVICE_AUTH_TOKEN=your_token_here
-CACHE_DIR=/tmp/tablescanner_cache
-CACHE_MAX_AGE_HOURS=24
-DEBUG=false
-```
-
-## Performance
-
-- Query execution: < 100ms for typical queries
-- Cache hit rate: > 80% for repeated queries
-- Database connection: Reused for 30 minutes
-- Query cache: 5-minute TTL, max 1000 entries
-- Automatic indexing: One-time cost, cached thereafter
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=app --cov-report=html
+│   │   ├── data/            # Query & Connection pooling logic
+│   │   └── db_helper.py     # Secure handle resolution
+│   └── utils/               # SQLite, KBase Client, and Cache utilities
+├── docs/                    # API and Architectural documentation
+├── tests/                   # Unit & Integration tests
+├── scripts/                 # Development helper scripts
+└── static/                  # Static assets for the viewer
 ```
 
 ## License

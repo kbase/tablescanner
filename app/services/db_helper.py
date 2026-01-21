@@ -12,6 +12,7 @@ from app.config import settings
 from app.utils.workspace import KBaseClient, download_pangenome_db
 from app.utils.sqlite import validate_table_exists, list_tables
 from app.utils.async_utils import run_sync_in_thread
+from app.utils.cache import sanitize_id
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def get_object_db_path(
     Get (and download if needed) a SQLite database from a BERDL object.
     
     Args:
-        berdl_table_id: KBase workspace reference
+        berdl_table_id: KBase workspace reference OR 'local:{uuid}' for uploaded files
         token: KBase auth token
         kb_env: KBase environment
         cache_dir: Cache directory path
@@ -77,6 +78,29 @@ async def get_object_db_path(
     Returns:
         Path to the local SQLite database file
     """
+    # Handle local uploads
+    if berdl_table_id.startswith("local:"):
+        # Expect format local:UUID
+        handle_parts = berdl_table_id.split(":", 1)
+        if len(handle_parts) != 2:
+             raise HTTPException(status_code=400, detail="Invalid local database handle format")
+             
+        filename = getattr(sanitize_id, 'original', sanitize_id)(handle_parts[1])
+        # Note: sanitize_id ensures only alphanumeric+._- chars
+        
+        # Double check against the original to ensure no unexpected chars werestripped silently that might imply malicious intent?
+        # Actually sanitize_id already does a good job. But let's be strict.
+        if filename != handle_parts[1]:
+             # If sanitize changed it, it had bad chars
+             raise HTTPException(status_code=400, detail="Invalid characters in local database handle")
+
+        db_path = cache_dir / "uploads" / f"{filename}.db"
+        
+        if not db_path.exists():
+            raise HTTPException(status_code=404, detail=f"Local database not found: {berdl_table_id}")
+            
+        return db_path
+
     try:
         # download_pangenome_db already handles caching logic
         return await run_sync_in_thread(

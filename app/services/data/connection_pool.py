@@ -33,14 +33,14 @@ class ConnectionPool:
     - Automatic cleanup of idle pools.
     """
     
-    # Connection timeout: 30 minutes of inactivity
-    POOL_TIMEOUT_SECONDS = 30 * 60
+    # Connection timeout: 10 minutes of inactivity (reduced for local DBs)
+    POOL_TIMEOUT_SECONDS = 10 * 60
     
     # Clean up interval
-    CLEANUP_INTERVAL_SECONDS = 5 * 60
+    CLEANUP_INTERVAL_SECONDS = 2 * 60
     
     # Maximum connections per database file
-    MAX_CONNECTIONS = 5 
+    MAX_CONNECTIONS = 8 
     
     def __init__(self) -> None:
         """Initialize the connection pool."""

@@ -243,11 +243,11 @@ def clear_cache(cache_dir: Path, berdl_table_id: str | None = None) -> dict[str,
 
 def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> dict[str, Any]:
     """
-    Remove cache directories older than max_age_days.
+    Remove cache directories older than max_age_days, AND uploads older than 1 hour.
     
     Args:
         cache_dir: Base cache directory
-        max_age_days: Maximum age in days
+        max_age_days: Maximum age in days for standard caches
         
     Returns:
         Summary of cleanup operation
@@ -259,8 +259,9 @@ def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> dict[str, Any]
     max_age_seconds = max_age_days * 24 * 3600
     removed = []
     
+    # Clean standard ID-based subdirectories
     for subdir in cache_dir.iterdir():
-        if not subdir.is_dir():
+        if not subdir.is_dir() or subdir.name == "uploads":
             continue
         
         try:
@@ -271,10 +272,26 @@ def cleanup_old_caches(cache_dir: Path, max_age_days: int = 7) -> dict[str, Any]
                 logger.info(f"Removed old cache: {subdir.name}")
         except Exception as e:
             logger.warning(f"Failed to clean {subdir}: {e}")
+
+    # Clean uploads directory (aggressive 1 hour expiry for temp availability)
+    uploads_dir = cache_dir / "uploads"
+    uploads_removed = 0
+    if uploads_dir.exists():
+        upload_max_age = 3600  # 1 hour
+        for f in uploads_dir.glob("*.db"):
+            try:
+                mtime = f.stat().st_mtime
+                if now - mtime > upload_max_age:
+                    f.unlink()
+                    uploads_removed += 1
+                    logger.debug(f"Removed expired upload: {f.name}")
+            except Exception as e:
+                logger.warning(f"Failed to clean upload {f}: {e}")
     
     return {
         "status": "success",
         "removed": len(removed),
+        "uploads_removed": uploads_removed,
         "items": removed
     }
 

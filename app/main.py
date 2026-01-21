@@ -20,6 +20,22 @@ from app.config import settings
 from app.exceptions import TableNotFoundError, InvalidFilterError
 
 
+from contextlib import asynccontextmanager
+from app.utils.cache import cleanup_old_caches
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Clean up old caches and uploads
+    try:
+        cleanup_result = cleanup_old_caches(Path(settings.CACHE_DIR))
+        # Use print or logger (logger is better if configured, but print works for startup)
+        import logging
+        logging.getLogger("uvicorn").info(f"Startup cleanup: {cleanup_result}")
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn").warning(f"Startup cleanup failed: {e}")
+    yield
+
 def create_app() -> FastAPI:
     """
     Application factory function.
@@ -119,6 +135,7 @@ def create_app() -> FastAPI:
         openapi_tags=tags_metadata,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # Add CORS middleware to allow cross-origin requests

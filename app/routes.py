@@ -16,10 +16,11 @@ import asyncio
 import logging
 import traceback
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path as FilePath
 from app.utils.workspace import KBaseClient
-
-from fastapi import APIRouter, HTTPException, Header, Query, Cookie
+import shutil
+from uuid import uuid4
+from fastapi import APIRouter, HTTPException, Header, Query, Cookie, Path, UploadFile, File
 
 from app.models import (
     TableDataRequest,
@@ -37,6 +38,7 @@ from app.models import (
     HealthResponse,
     FilterRequest,
     AggregationRequest,
+    UploadDBResponse,
 )
 from app.utils.workspace import (
     download_pangenome_db,
@@ -47,6 +49,7 @@ from app.utils.sqlite import (
     get_table_columns,
     get_table_row_count,
     validate_table_exists,
+    get_table_statistics,
 )
 from app.services.data.schema_service import get_schema_service
 from app.services.data.connection_pool import get_connection_pool
@@ -72,49 +75,61 @@ router = APIRouter()
 
 def get_auth_token(
     authorization: str | None = None,
-    kbase_session: str | None = None
+    kbase_session: str | None = None,
+    allow_anonymous: bool = False
 ) -> str:
     """
-    Extract auth token from header, cookie, or settings.
+    Extract auth token from header or cookie.
+    
+    **User Authentication Required**: Each user must provide their own KBase token.
+    The service does NOT use a shared token for production access.
     
     Priority:
     1. Authorization header (Bearer token or plain token)
     2. kbase_session cookie
-    3. KB_SERVICE_AUTH_TOKEN from settings
+    3. KB_SERVICE_AUTH_TOKEN from settings (LEGACY: for local testing only)
     
     Args:
         authorization: Authorization header value
         kbase_session: kbase_session cookie value
+        allow_anonymous: If True, returns empty string instead of raising 401
         
     Returns:
         Authentication token string
         
     Raises:
-        HTTPException: If no token is found
+        HTTPException: If no token is found and allow_anonymous is False
     """
-    # Try Authorization header first
+    # Priority 1: User-provided Authorization header
     if authorization:
         if authorization.startswith("Bearer "):
             return authorization[7:]
         return authorization
     
-    # Try kbase_session cookie
+    # Priority 2: User-provided kbase_session cookie
     if kbase_session:
         return kbase_session
     
-    # Fall back to service token from settings
+    # Priority 3 (LEGACY/TESTING ONLY): Fall back to service token from settings
+    # This is kept for local development and testing purposes.
+    # In production deployments, users MUST provide their own token.
     if settings.KB_SERVICE_AUTH_TOKEN:
+        logger.debug("Using KB_SERVICE_AUTH_TOKEN fallback (legacy/testing mode)")
         return settings.KB_SERVICE_AUTH_TOKEN
+    
+    # No token found
+    if allow_anonymous:
+        return ""
     
     raise HTTPException(
         status_code=401,
-        detail="Authorization required. Provide token via Authorization header, kbase_session cookie, or configure KB_SERVICE_AUTH_TOKEN."
+        detail="Authorization required. Provide your KBase token via the Authorization header or kbase_session cookie."
     )
 
 
-def get_cache_dir() -> Path:
+def get_cache_dir() -> FilePath:
     """Get configured cache directory."""
-    return Path(settings.CACHE_DIR)
+    return FilePath(settings.CACHE_DIR)
 
 
 # =============================================================================
@@ -155,7 +170,7 @@ async def health_check():
             timestamp=datetime.utcnow().isoformat() + "Z",
             mode="cached_sqlite",
             data_dir=str(settings.CACHE_DIR),
-            config_dir=str(Path(settings.CACHE_DIR) / "configs"),
+            config_dir=str(FilePath(settings.CACHE_DIR) / "configs"),
             cache={
                 "databases_cached": cache_stats.get("total_connections", 0),
                 "databases": cache_stats.get("connections", [])
@@ -166,27 +181,141 @@ async def health_check():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+# =============================================================================
+# FILE UPLOAD ENDPOINTS
+# =============================================================================
+
+@router.post(
+    "/upload",
+    tags=["File Upload"],
+    response_model=UploadDBResponse,
+    summary="Upload a local SQLite database",
+    description="""
+    Upload a local SQLite database file (.db or .sqlite) for temporary use.
+    Returns a handle that can be used inplace of a KBase workspace reference.
+    
+    The handle format is `local:{uuid}`.
+    """
+)
+async def upload_database(
+    file: UploadFile = File(..., description="SQLite database file")
+):
+    try:
+        if not file.filename.endswith(('.db', '.sqlite', '.sqlite3')):
+             raise HTTPException(status_code=400, detail="File must be a SQLite database (.db, .sqlite, .sqlite3)")
+        
+        # Validate SQLite header
+        # SQLite files start with "SQLite format 3\0"
+        header = await file.read(16)
+        await file.seek(0)
+        
+        if header != b"SQLite format 3\0":
+             logger.warning(f"Invalid SQLite header for upload {file.filename}: {header}")
+             raise HTTPException(status_code=400, detail="Invalid SQLite file format (header mismatch)")
+
+        # Generate handle
+        file_uuid = str(uuid4())
+        handle = f"local:{file_uuid}"
+        
+        # Save to uploads directory
+        cache_dir = get_cache_dir()
+        upload_dir = cache_dir / "uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        destination = upload_dir / f"{file_uuid}.db"
+        
+        try:
+            with destination.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        finally:
+            file.file.close()
+            
+        return UploadDBResponse(
+            handle=handle,
+            filename=file.filename,
+            size_bytes=destination.stat().st_size,
+            message="Database uploaded successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
 # =============================================================================
 # OBJECT-BASED ENDPOINTS (via KBase workspace object reference)
 # /object/{ws_ref}/tables - List tables from KBase object
 # /object/{ws_ref}/tables/{table}/data - Query data
 # =============================================================================
 
-@router.get("/object/{ws_ref:path}/tables", tags=["Object Access"], response_model=TableListResponse)
-async def list_tables_by_object(
-    ws_ref: str,
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None),
-    kbase_session: str | None = Cookie(None)
-):
-    """
-    List tables for a BERDLTables object.
+@router.get(
+    "/object/{ws_ref:path}/tables",
+    tags=["Object Access"],
+    response_model=TableListResponse,
+    summary="List tables in a BERDLTables object",
+    description="""
+    List all tables available in a BERDLTables object from KBase workspace.
     
-    Authentication can be provided via:
-    - Authorization header (Bearer token or plain token)
-    - kbase_session cookie
-    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
-    """
+    **Example Usage:**
+    ```bash
+    # Using curl with Authorization header
+    curl -X GET \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables?kb_env=appdev" \\
+      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "accept: application/json"
+    
+    # Using curl with cookie
+    curl -X GET \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables?kb_env=appdev" \\
+      -H "Cookie: kbase_session=YOUR_KBASE_TOKEN" \\
+      -H "accept: application/json"
+    ```
+    
+    **Authentication:**
+    - Authorization header: `Authorization: Bearer YOUR_TOKEN` or `Authorization: YOUR_TOKEN`
+    - Cookie: `kbase_session=YOUR_TOKEN`
+    - Environment variable: `KB_SERVICE_AUTH_TOKEN` (for service-to-service)
+    """,
+    responses={
+        200: {
+            "description": "Successfully retrieved table list",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "berdl_table_id": "76990/7/2",
+                        "object_type": "KBaseGeneDataLakes.BERDLTables-1.0",
+                        "tables": [
+                            {
+                                "name": "Genes",
+                                "displayName": "Genes",
+                                "row_count": 3356,
+                                "column_count": 18
+                            },
+                            {
+                                "name": "Contigs",
+                                "displayName": "Contigs",
+                                "row_count": 42,
+                                "column_count": 12
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        401: {"description": "Authentication required"},
+        404: {"description": "Object not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def list_tables_by_object(
+    ws_ref: str = Path(..., description="KBase workspace object reference (UPA format: workspace_id/object_id/version)", examples=["76990/7/2"]),
+    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    authorization: str | None = Header(None, description="KBase authentication token (Bearer token or plain token)", examples=["Bearer YOUR_KBASE_TOKEN"]),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
+):
 
     
     try:
@@ -302,32 +431,54 @@ async def list_tables_by_object(
         raise HTTPException(status_code=500, detail=error_detail)
 
 
-@router.get("/object/{ws_ref:path}/tables/{table_name}/data", tags=["Object Access"], response_model=TableDataResponse)
-async def get_table_data_by_object(
-    ws_ref: str,
-    table_name: str,
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    offset: int = Query(0, ge=0),
-    sort_column: str | None = Query(None),
-    sort_order: str | None = Query("ASC"),
-    search: str | None = Query(None),
-    kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None),
-    kbase_session: str | None = Cookie(None)
-):
-    """
-    Query table data from a BERDLTables object.
+@router.get(
+    "/object/{ws_ref:path}/tables/{table_name}/data",
+    tags=["Object Access"],
+    response_model=TableDataResponse,
+    summary="Query table data from a BERDLTables object",
+    description="""
+    Query data from a specific table in a BERDLTables object with filtering, sorting, and pagination.
     
-    Authentication can be provided via:
-    - Authorization header (Bearer token or plain token)
-    - kbase_session cookie
-    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
-    """
+    **Example Usage:**
+    ```bash
+    # Get first 10 rows from Genes table
+    curl -X GET \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=10&kb_env=appdev" \\
+      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "accept: application/json"
+    
+    # Search and sort
+    curl -X GET \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=20&offset=0&search=kinase&sort_column=gene_name&sort_order=ASC&kb_env=appdev" \\
+      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "accept: application/json"
+    ```
+    """,
+    responses={
+        200: {"description": "Successfully retrieved table data"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Table not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def get_table_data_by_object(
+    ws_ref: str = Path(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2"]),
+    table_name: str = Path(..., description="Name of the table to query", examples=["Genes"]),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Maximum number of rows to return", examples=[10]),
+    offset: int = Query(0, ge=0, description="Number of rows to skip (for pagination)", examples=[0]),
+    sort_column: str | None = Query(None, description="Column name to sort by", examples=["gene_name"]),
+    sort_order: str | None = Query("ASC", description="Sort order: ASC or DESC", examples=["ASC"]),
+    search: str | None = Query(None, description="Global text search across all columns", examples=["kinase"]),
+    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    authorization: str | None = Header(None, description="KBase authentication token", examples=["Bearer YOUR_KBASE_TOKEN"]),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
+):
     try:
         token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
+
         # Get and validate DB access
         db_path = await get_object_db_path(berdl_table_id, token, kb_env, cache_dir)
         await ensure_table_accessible(db_path, table_name)
@@ -346,13 +497,51 @@ async def get_table_data_by_object(
         return result
         
     except HTTPException:
-        # Re-raise HTTP exceptions as-is (don't convert to 500)
         raise
     except Exception as e:
-        # Log full traceback for debugging
         logger.error(f"Error querying data: {e}", exc_info=True)
-        # Provide detailed error message
-        # Always include the error message, add traceback in debug mode
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
+@router.get(
+    "/object/{ws_ref:path}/tables/{table_name}/stats",
+    tags=["Object Access"],
+    response_model=TableStatisticsResponse,
+    summary="Get column statistics for a table",
+    description="""
+    Calculate statistics for all columns in a table (null counts, distinct counts, min/max, samples).
+    This operation may be slow for large tables.
+    """
+)
+async def get_table_stats(
+    ws_ref: str = Path(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2"]),
+    table_name: str = Path(..., description="Name of the table to analyze", examples=["Genes"]),
+    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    authorization: str | None = Header(None, description="KBase authentication token", examples=["Bearer YOUR_KBASE_TOKEN"]),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
+):
+    try:
+        token = get_auth_token(authorization, kbase_session)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Get and validate DB access
+        db_path = await get_object_db_path(berdl_table_id, token, kb_env, cache_dir)
+        await ensure_table_accessible(db_path, table_name)
+        
+        # Helper to run stats calculation in thread (CPU bound)
+        # from app.utils.sqlite import get_table_statistics
+        
+        stats = await run_sync_in_thread(get_table_statistics, db_path, table_name)
+        return stats
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating stats: {e}", exc_info=True)
         error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
         if settings.DEBUG:
             error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
@@ -363,20 +552,57 @@ async def get_table_data_by_object(
 # DATA ACCESS ENDPOINTS
 # =============================================================================
 
-@router.post("/table-data", response_model=TableDataResponse, tags=["Data Access"])
+@router.post(
+    "/table-data",
+    response_model=TableDataResponse,
+    tags=["Data Access"],
+    summary="Query table data with advanced filtering (POST)",
+    description="""
+    Query table data using a JSON request body. Recommended for complex queries with multiple filters.
+    
+    **Example Usage:**
+    ```bash
+    # Simple query
+    curl -X POST \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/table-data" \\
+      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "berdl_table_id": "76990/7/2",
+        "table_name": "Genes",
+        "limit": 10,
+        "offset": 0
+      }'
+    
+    # Query with filters
+    curl -X POST \\
+      "https://appdev.kbase.us/services/berdl_table_scanner/table-data" \\
+      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "berdl_table_id": "76990/7/2",
+        "table_name": "Genes",
+        "limit": 20,
+        "query_filters": [
+          {"column": "gene_name", "operator": "like", "value": "kinase"},
+          {"column": "contigs", "operator": "gt", "value": 5}
+        ],
+        "sort": [{"column": "gene_name", "direction": "asc"}]
+      }'
+    ```
+    """,
+    responses={
+        200: {"description": "Successfully retrieved table data"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Table not found"},
+        500: {"description": "Internal server error"}
+    }
+)
 async def query_table_data(
     request: TableDataRequest,
-    authorization: str | None = Header(None),
-    kbase_session: str | None = Cookie(None)
+    authorization: str | None = Header(None, description="KBase authentication token", examples=["Bearer YOUR_KBASE_TOKEN"]),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
 ):
-    """
-    Query table data using a JSON body. Recommended for programmatic access.
-    
-    Authentication can be provided via:
-    - Authorization header (Bearer token or plain token)
-    - kbase_session cookie
-    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
-    """
     try:
         token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
@@ -384,12 +610,8 @@ async def query_table_data(
         
         filters = request.col_filter if request.col_filter else request.query_filters
         
-        try:
-            db_path = download_pangenome_db(
-                request.berdl_table_id, token, cache_dir, kb_env
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        # Get and validate DB access (uses generic helper that supports local:)
+        db_path = await get_object_db_path(request.berdl_table_id, token, kb_env, cache_dir)
         
         if not validate_table_exists(db_path, request.table_name):
             available = list_tables(db_path)

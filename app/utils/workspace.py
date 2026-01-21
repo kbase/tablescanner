@@ -433,6 +433,9 @@ def get_object_type(
     Returns:
         Object type string (e.g., "KBaseGeneDataLakes.BERDLTables-1.0")
     """
+    if berdl_table_id.startswith("local:"):
+        return "LocalDatabase"
+        
     client = KBaseClient(auth_token, kb_env)
     return client.get_object_type_only(berdl_table_id)
 

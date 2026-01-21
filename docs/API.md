@@ -7,9 +7,13 @@ The **TableScanner** service provides read-only access to SQLite databases store
 - **Production**: `https://kbase.us/services/berdl_table_scanner` (or similar)
 
 ## Authentication
-All endpoints require a KBase authentication token.
+
+**Each user must provide their own KBase authentication token.** The service does not use a shared/service-level token for production access.
+
 - **Header (recommended)**: `Authorization: <token>` or `Authorization: Bearer <token>`
-- **Cookie**: `kbase_session=<token>` (useful for browser-based clients)
+- **Cookie**: `kbase_session=<token>` (useful for browser-based clients like DataTables Viewer)
+
+> **Note for Developers**: The `KB_SERVICE_AUTH_TOKEN` environment variable is available as a legacy fallback for local testing only. It should NOT be relied upon in production.
 
 ---
 
@@ -58,6 +62,11 @@ curl -X GET \
   -H "Authorization: Bearer $KB_TOKEN"
 ```
 
+### `GET /object/{ws_ref}/tables/{table_name}/stats`
+Get detailed statistics for all columns in a table.
+- **Response**: Column statistics including null counts, distinct counts, min/max/mean, and samples.
+
+
 ---
 
 ## 3. Data Access
@@ -77,3 +86,34 @@ Complex query endpoint supporting advanced filtering.
   }
   ```
 - **Supported Operators**: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `not_in`, `between`, `is_null`, `is_not_null`.
+
+---
+
+## 4. Local Database Upload
+
+### `POST /upload`
+Upload a temporary SQLite database file to the server. Useful for testing or serving local files.
+
+- **Request**: Multipart form data with key `file`
+- **Response**:
+  ```json
+  {
+    "handle": "local:uuid-string",
+    "filename": "my_db.db",
+    "size_bytes": 10240,
+    "message": "Database uploaded successfully"
+  }
+  ```
+
+### Usage Workflow
+1. **Upload File**:
+   ```bash
+   curl -X POST "http://localhost:8000/upload" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "file=@/path/to/test.db"
+   ```
+2. **Use Handle**: The returned `handle` (e.g., `local:abc-123`) can be used as the `berdl_table_id` or `ws_ref` in any other endpoint.
+   - List tables: `GET /object/local:abc-123/tables`
+   - Query data: `POST /table-data` with `"berdl_table_id": "local:abc-123"`
+

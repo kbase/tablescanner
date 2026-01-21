@@ -1,0 +1,11 @@
+# TableScanner Requirements
+# Install with: pip install -r requirements.txt
+
+fastapi[standard]>=0.124.4
+uvicorn>=0.38.0
+pydantic>=2.11.0
+pydantic-settings>=2.0.0
+requests>=2.31.0
+python-multipart>=0.0.20
+tqdm>=4.64.0
+minio>=7.2.20
