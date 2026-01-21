@@ -83,6 +83,9 @@ class KBaseClient:
                         kb_version=kb_env,
                         token=token
                     )
+                    # Ensure token is saved in the token hash
+                    if hasattr(self, 'save_token') and token:
+                        self.save_token(token, namespace="kbase", save_file=False)
             
             self._client = NotebookUtil()
             self._use_kbutillib = True
@@ -129,11 +132,14 @@ class KBaseClient:
         
         if self._use_kbutillib and self._client:
             try:
+                # Ensure KBUtilLib has the token set
+                if hasattr(self._client, 'save_token'):
+                    self._client.save_token(self.token, namespace="kbase")
                 result = self._client.download_blob_file(handle_ref, str(target_path))
                 if result:
                     return Path(result)
             except Exception as e:
-                logger.warning(f"KBUtilLib download_blob_file failed: {e}. Using fallback.")
+                logger.warning(f"KBUtilLib download_blob_file failed: {e}. Using fallback.", exc_info=True)
                 
         return Path(self._download_blob_fallback(handle_ref, str(target_path)))
     
@@ -340,7 +346,7 @@ class KBaseClient:
             resp = requests.post(
                 endpoints["handle"],
                 json=handle_payload,
-                headers={"Authorization": self.token, "Content-Type": "application/json"},
+                headers={"Authorization": f"OAuth {self.token}", "Content-Type": "application/json"},
                 timeout=30
             )
             resp.raise_for_status()
