@@ -94,7 +94,7 @@ def create_app() -> FastAPI:
     )
 
     # Add CORS middleware to allow cross-origin requests
-    # This is necessary when viewer.html is opened from file:// or different origin
+    # Update CORS middleware to allow requests from the frontend
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

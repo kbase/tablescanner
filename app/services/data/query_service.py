@@ -20,20 +20,18 @@ import hashlib
 import json
 import threading
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from collections import OrderedDict
 from dataclasses import dataclass
 
 from app.services.data.connection_pool import get_connection_pool
 from app.config_constants import (
-    CACHE_TTL_SECONDS, 
-    CACHE_MAX_ENTRIES, 
-    INDEX_CACHE_TTL
+    CACHE_MAX_ENTRIES,
+    INDEX_CACHE_TTL,
 )
 from app.exceptions import (
-    TableNotFoundError, 
-    ColumnNotFoundError, 
-    InvalidFilterError
+    TableNotFoundError,
+    InvalidFilterError,
 )
 
 logger = logging.getLogger(__name__)
@@ -174,12 +172,15 @@ class QueryService:
             with self.pool.connection(db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Validate table existence
+                # Validate table existence and get validated table name
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-                if not cursor.fetchone():
+                result = cursor.fetchone()
+                if not result:
                     raise TableNotFoundError(table_name)
-    
-                cursor.execute(f"PRAGMA table_info(\"{table_name}\")")
+                
+                # Use validated table name from sqlite_master to prevent SQL injection
+                validated_table_name = result[0]
+                cursor.execute(f"PRAGMA table_info(\"{validated_table_name}\")")
                 rows = cursor.fetchall()
                 
                 column_types = []

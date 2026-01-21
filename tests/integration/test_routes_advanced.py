@@ -1,7 +1,5 @@
-
 import unittest
 import sqlite3
-import shutil
 from pathlib import Path
 from fastapi.testclient import TestClient
 from app.main import app

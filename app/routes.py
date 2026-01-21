@@ -230,8 +230,9 @@ async def list_tables_by_object(
         database_size = None
         try:
             database_size = db_path.stat().st_size if db_path.exists() else None
-        except Exception:
-            pass
+        except Exception as e:
+            # Database size is informational; log and continue if it cannot be determined.
+            logger.debug("Failed to get database size for %s: %s", db_path, e)
         
         # Format berdl_table_id for DataTables Viewer API (local/db_name format)
         berdl_table_id_formatted = f"local/{berdl_table_id.replace('/', '_')}"

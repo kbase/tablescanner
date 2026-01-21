@@ -15,7 +15,6 @@ import threading
 import math
 from pathlib import Path
 from typing import Any
-from collections import OrderedDict
 from dataclasses import dataclass
 
 from app.services.data.connection_pool import get_connection_pool

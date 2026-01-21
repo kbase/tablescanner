@@ -13,13 +13,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 try:
-    from jsonschema import validate, ValidationError, Draft7Validator
+    from jsonschema import validate, Draft7Validator
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
     # Dummy objects if needed
     validate = None
-    ValidationError = Exception
     Draft7Validator = None
 
 

@@ -5,10 +5,9 @@ import sqlite3
 import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 from app.services.data.connection_pool import get_connection_pool
-from app.services.data.query_service import get_query_service, QueryService, AggregationSpec
+from app.services.data.query_service import get_query_service, AggregationSpec
 
 # Use a temporary database for testing
 @pytest.fixture
@@ -108,9 +107,6 @@ def test_pool_exhaustion_timeout(test_db):
     pool = get_connection_pool()
     db_path = test_db
     
-    # Hold all connections manually
-    held_conns = []
-    
     try:
         # Max connections is 5 by default constant in connection_pool.py
         # We'll try to grab 6.
@@ -150,7 +146,6 @@ def test_pool_exhaustion_timeout(test_db):
         # but our implementation uses default.
         # Let's verify it raises TimeoutError/Empty after waiting.
         
-        start_time = time.time()
         try:
             # We suspect this will raise or block.
             # Depending on queue.get(timeout=...), default in code was 5.0s
@@ -161,10 +156,6 @@ def test_pool_exhaustion_timeout(test_db):
             # Expecting some kind of queue Empty or timeout exception
             pass
         finally:
-            duration = time.time() - start_time
-            # If it waited at least some seconds, it proves it blocked.
-            # If it succeeded instantly, then our test setup failed to saturate pool.
-            
             # Release threads
             for evt in stop_events:
                 evt.set()

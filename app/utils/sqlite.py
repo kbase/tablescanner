@@ -51,9 +51,15 @@ def get_table_columns(db_path: Path, table_name: str) -> list[str]:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        _validate_table_name(cursor, table_name)
-
-        cursor.execute(f"PRAGMA table_info(\"{table_name}\")")
+        # Validate table existence and get validated table name
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Invalid table name: {table_name}")
+        
+        # Use validated table name from sqlite_master to prevent SQL injection
+        validated_table_name = result[0]
+        cursor.execute(f"PRAGMA table_info(\"{validated_table_name}\")")
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
 
@@ -72,9 +78,15 @@ def get_table_row_count(db_path: Path, table_name: str) -> int:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        _validate_table_name(cursor, table_name)
-
-        cursor.execute(f"SELECT COUNT(*) FROM \"{table_name}\"")
+        # Validate table existence and get validated table name
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Invalid table name: {table_name}")
+        
+        # Use validated table name from sqlite_master to prevent SQL injection
+        validated_table_name = result[0]
+        cursor.execute(f"SELECT COUNT(*) FROM \"{validated_table_name}\"")
         count = cursor.fetchone()[0]
         conn.close()
 

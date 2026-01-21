@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-import sys
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,7 +151,15 @@ class SchemaAnalyzer:
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
             
-            profile = self._analyze_table(cursor, table_name)
+            # Validate table existence and get validated table name
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            result = cursor.fetchone()
+            if not result:
+                raise ValueError(f"Invalid table name: {table_name}")
+            
+            # Use validated table name from sqlite_master to prevent SQL injection
+            validated_table_name = result[0]
+            profile = self._analyze_table(cursor, validated_table_name)
             
             conn.close()
             return profile
@@ -216,10 +223,15 @@ class SchemaAnalyzer:
     # ─── Private Methods ────────────────────────────────────────────────────
     
     def _analyze_table(self, cursor: sqlite3.Cursor, table_name: str) -> TableProfile:
-        """Analyze a single table using an open cursor."""
+        """
+        Analyze a single table using an open cursor.
+        
+        Note: table_name should already be validated from sqlite_master.
+        """
         
         profile = TableProfile(name=table_name)
         
+        # table_name is already validated, safe to use in queries
         # Get row count
         cursor.execute(f'SELECT COUNT(*) FROM "{table_name}"')
         profile.row_count = cursor.fetchone()[0]
@@ -305,8 +317,14 @@ class SchemaAnalyzer:
                     profile.min_value = result[0]
                     profile.max_value = result[1]
                     profile.avg_length = result[2] or 0.0
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as e:
+                # Per-column numeric statistics are best-effort; log at debug and continue.
+                logger.debug(
+                    "Error computing numeric statistics for %s.%s: %s",
+                    table_name,
+                    col_name,
+                    e,
+                )
         
         # Get average length for text columns
         elif col_type.upper() in ("TEXT", "VARCHAR", "CHAR", ""):
@@ -319,8 +337,14 @@ class SchemaAnalyzer:
                 result = cursor.fetchone()
                 if result and result[0]:
                     profile.avg_length = float(result[0])
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as e:
+                # Per-column text statistics are best-effort; log at debug and continue.
+                logger.debug(
+                    "Error computing text statistics for %s.%s: %s",
+                    table_name,
+                    col_name,
+                    e,
+                )
         
         # Detect patterns in sample values
         profile.detected_patterns = self._detect_patterns(profile.sample_values)

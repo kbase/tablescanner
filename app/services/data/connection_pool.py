@@ -92,8 +92,9 @@ class ConnectionPool:
                     # Connection bad, close and make new one
                     try:
                         conn.close()
-                    except: 
-                        pass
+                    except Exception:
+                        # Best-effort close; log at debug and continue with a fresh connection.
+                        logger.debug("Failed to close bad SQLite connection for %s", db_key, exc_info=True)
                     conn = self._create_new_connection(db_key)
 
             except queue.Empty:
@@ -132,12 +133,9 @@ class ConnectionPool:
                 # If we get Empty, we check if we can create better?
                 # Actually, simpler: Pre-populate or lazily populate?
                 # Lazy: If invalid/closed, we discard.
-                
+                #
                 # For this fix, let's use a "LifoQueue" or standard Queue.
                 # But to manage the *limit*, we need to know how many are out there.
-                
-                # Let's go with a simpler Non-Blocking creation if under limit.
-                pass
                 raise TimeoutError(f"Timeout waiting for database connection: {db_path}")
 
             yield conn
@@ -148,8 +146,10 @@ class ConnectionPool:
                 # Rollback uncommitted transaction to reset state
                 try:
                     conn.rollback()
-                except:
-                    pass
+                except Exception:
+                    # If rollback fails, the connection may be in a bad state; it will
+                    # still be returned to the pool but future health checks will replace it.
+                    logger.debug("Failed to rollback SQLite connection for %s", db_key, exc_info=True)
                 
                 # Put back in queue
                 # Note: We must update the last access time for the POOL, not the connection
@@ -181,8 +181,10 @@ class ConnectionPool:
                 logger.error(f"Error filling connection pool for {db_key}: {e}")
                 # Close any created ones?
                 while not q.empty():
-                    try: q.get_nowait().close()
-                    except: pass
+                    try:
+                        q.get_nowait().close()
+                    except Exception:
+                        logger.debug("Failed to close SQLite connection during pool recovery.", exc_info=True)
                 raise
             
             self._pools[db_key] = (q, time.time())
@@ -247,8 +249,9 @@ class ConnectionPool:
             try:
                 conn = q.get_nowait()
                 conn.close()
-            except:
-                pass
+            except Exception:
+                # Best-effort close; swallow errors but record at debug.
+                logger.debug("Failed to close SQLite connection during pool cleanup.", exc_info=True)
 
     def get_stats(self) -> dict[str, Any]:
         """Get pool statistics."""
