@@ -9,6 +9,9 @@ RUN mkdir -p lib && \
     git clone https://github.com/cshenry/KBUtilLib.git && \
     cd ..
 
+# Add KBUtilLib to PYTHONPATH so it can be imported
+ENV PYTHONPATH=/app/lib/KBUtilLib/src:${PYTHONPATH}
+
 # Copy application code and dependencies
 COPY app ./app
 COPY pyproject.toml /app/pyproject.toml
