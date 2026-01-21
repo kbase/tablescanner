@@ -8,7 +8,8 @@ The **TableScanner** service provides read-only access to SQLite databases store
 
 ## Authentication
 All endpoints require a KBase authentication token.
-- **Header**: `Authorization: <token>` or `Authorization: Bearer <token>`
+- **Header (recommended)**: `Authorization: <token>` or `Authorization: Bearer <token>`
+- **Cookie**: `kbase_session=<token>` (useful for browser-based clients)
 
 ---
 
@@ -26,6 +27,16 @@ Detailed health check including connection pool stats.
 ## 2. Object Access
 Access databases via KBase Workspace Object Reference (UPA, e.g., `76990/7/2`).
 
+### Example curl (with auth)
+
+```bash
+# List tables for an object (replace WS_REF with a real UPA like 76990/7/2)
+curl -X GET \
+  "http://localhost:8000/object/WS_REF/tables?kb_env=appdev" \
+  -H "accept: application/json" \
+  -H "Authorization: Bearer $KB_TOKEN"
+```
+
 ### `GET /object/{ws_ref}/tables`
 List tables for a BERDLTables object.
 - **Response**: Table list with schema overviews.
@@ -38,6 +49,14 @@ Query table data.
   - `sort_column`, `sort_order` (`ASC`/`DESC`)
   - `search` (Global text search)
 - **Response**: Headers, data rows, total count.
+
+```bash
+# Query table data (replace TABLE_NAME with a real table like Genes)
+curl -X GET \
+  "http://localhost:8000/object/WS_REF/tables/TABLE_NAME/data?limit=10&kb_env=appdev" \
+  -H "accept: application/json" \
+  -H "Authorization: Bearer $KB_TOKEN"
+```
 
 ---
 

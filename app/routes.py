@@ -14,11 +14,12 @@ Also supports legacy endpoints for backwards compatibility.
 
 import asyncio
 import logging
+import traceback
 from datetime import datetime
 from pathlib import Path
 from app.utils.workspace import KBaseClient
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, HTTPException, Header, Query, Cookie
 
 from app.models import (
     TableDataRequest,
@@ -69,19 +70,45 @@ router = APIRouter()
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def get_auth_token(authorization: str | None = None) -> str:
-    """Extract auth token from header or settings."""
+def get_auth_token(
+    authorization: str | None = None,
+    kbase_session: str | None = None
+) -> str:
+    """
+    Extract auth token from header, cookie, or settings.
+    
+    Priority:
+    1. Authorization header (Bearer token or plain token)
+    2. kbase_session cookie
+    3. KB_SERVICE_AUTH_TOKEN from settings
+    
+    Args:
+        authorization: Authorization header value
+        kbase_session: kbase_session cookie value
+        
+    Returns:
+        Authentication token string
+        
+    Raises:
+        HTTPException: If no token is found
+    """
+    # Try Authorization header first
     if authorization:
         if authorization.startswith("Bearer "):
             return authorization[7:]
         return authorization
     
+    # Try kbase_session cookie
+    if kbase_session:
+        return kbase_session
+    
+    # Fall back to service token from settings
     if settings.KB_SERVICE_AUTH_TOKEN:
         return settings.KB_SERVICE_AUTH_TOKEN
     
     raise HTTPException(
         status_code=401,
-        detail="Authorization token required"
+        detail="Authorization required. Provide token via Authorization header, kbase_session cookie, or configure KB_SERVICE_AUTH_TOKEN."
     )
 
 
@@ -149,15 +176,21 @@ async def health_check():
 async def list_tables_by_object(
     ws_ref: str,
     kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
+    authorization: str | None = Header(None),
+    kbase_session: str | None = Cookie(None)
 ):
     """
     List tables for a BERDLTables object.
+    
+    Authentication can be provided via:
+    - Authorization header (Bearer token or plain token)
+    - kbase_session cookie
+    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
     """
 
     
     try:
-        token = get_auth_token(authorization)
+        token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
@@ -255,9 +288,18 @@ async def list_tables_by_object(
             "api_version": "2.0",
         }
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is (don't convert to 500)
+        raise
     except Exception as e:
-        logger.error(f"Error listing tables: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full traceback for debugging
+        logger.error(f"Error listing tables: {e}", exc_info=True)
+        # Provide detailed error message
+        # Always include the error message, add traceback in debug mode
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @router.get("/object/{ws_ref:path}/tables/{table_name}/data", tags=["Object Access"], response_model=TableDataResponse)
@@ -270,13 +312,19 @@ async def get_table_data_by_object(
     sort_order: str | None = Query("ASC"),
     search: str | None = Query(None),
     kb_env: str = Query("appdev"),
-    authorization: str | None = Header(None)
+    authorization: str | None = Header(None),
+    kbase_session: str | None = Cookie(None)
 ):
     """
     Query table data from a BERDLTables object.
+    
+    Authentication can be provided via:
+    - Authorization header (Bearer token or plain token)
+    - kbase_session cookie
+    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
     """
     try:
-        token = get_auth_token(authorization)
+        token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
         berdl_table_id = ws_ref
         
@@ -298,10 +346,17 @@ async def get_table_data_by_object(
         return result
         
     except HTTPException:
+        # Re-raise HTTP exceptions as-is (don't convert to 500)
         raise
     except Exception as e:
-        logger.error(f"Error querying data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full traceback for debugging
+        logger.error(f"Error querying data: {e}", exc_info=True)
+        # Provide detailed error message
+        # Always include the error message, add traceback in debug mode
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 # =============================================================================
@@ -311,13 +366,19 @@ async def get_table_data_by_object(
 @router.post("/table-data", response_model=TableDataResponse, tags=["Data Access"])
 async def query_table_data(
     request: TableDataRequest,
-    authorization: str | None = Header(None)
+    authorization: str | None = Header(None),
+    kbase_session: str | None = Cookie(None)
 ):
     """
     Query table data using a JSON body. Recommended for programmatic access.
+    
+    Authentication can be provided via:
+    - Authorization header (Bearer token or plain token)
+    - kbase_session cookie
+    - KB_SERVICE_AUTH_TOKEN environment variable (for service-to-service)
     """
     try:
-        token = get_auth_token(authorization)
+        token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
         kb_env = getattr(request, 'kb_env', 'appdev') or 'appdev'
         
@@ -360,8 +421,15 @@ async def query_table_data(
         )
         
     except HTTPException:
+        # Re-raise HTTP exceptions as-is (don't convert to 500)
         raise
     except Exception as e:
-        logger.error(f"Error querying data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full traceback for debugging
+        logger.error(f"Error querying data: {e}", exc_info=True)
+        # Provide detailed error message
+        # Always include the error message, add traceback in debug mode
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 

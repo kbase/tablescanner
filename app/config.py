@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     # ==========================================================================
     # AUTHENTICATION
     # ==========================================================================
-    KB_SERVICE_AUTH_TOKEN: str = Field(
-        ...,
-        description="KBase authentication token for API access"
+    KB_SERVICE_AUTH_TOKEN: str | None = Field(
+        default=None,
+        description="KBase authentication token for service-to-service API access (optional if using header/cookie auth)"
     )
 
     # ==========================================================================
