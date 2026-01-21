@@ -190,17 +190,37 @@ class KBaseClient:
         }
         
         endpoints = self._get_endpoints()
-        response = requests.post(
-            endpoints["workspace"],
-            json=payload,
-            headers=headers,
-            timeout=30  # Reduced from 60 to fail faster
-        )
-        response.raise_for_status()
-        result = response.json()
-        
-        if "error" in result:
-            raise ValueError(result["error"].get("message", "Unknown error"))
+        try:
+            response = requests.post(
+                endpoints["workspace"],
+                json=payload,
+                headers=headers,
+                timeout=30  # Reduced from 60 to fail faster
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if "error" in result:
+                error_msg = result["error"].get("message", "Unknown error")
+                error_code = result["error"].get("code", "Unknown")
+                logger.error(f"Workspace API error for {ref}: [{error_code}] {error_msg}")
+                raise ValueError(f"Workspace API error: [{error_code}] {error_msg}")
+        except requests.exceptions.HTTPError as e:
+            # Capture response body for better error messages
+            error_detail = f"HTTP {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                if "error" in error_body:
+                    error_detail = error_body["error"].get("message", str(error_body))
+                else:
+                    error_detail = str(error_body)
+            except:
+                error_detail = e.response.text[:500] if e.response.text else str(e)
+            logger.error(f"Workspace API HTTP error for {ref}: {error_detail}")
+            raise ValueError(f"Workspace service error: {error_detail}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Workspace API request failed for {ref}: {e}")
+            raise ValueError(f"Failed to connect to workspace service: {str(e)}")
             
         data_list = result.get("result", [{}])[0].get("data", [])
         if not data_list:
@@ -255,17 +275,32 @@ class KBaseClient:
         }
         
         endpoints = self._get_endpoints()
-        response = requests.post(
-            endpoints["workspace"],
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
-        response.raise_for_status()
-        result = response.json()
-        
-        if "error" in result:
-            logger.warning(f"Error getting object type: {result['error']}")
+        try:
+            response = requests.post(
+                endpoints["workspace"],
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if "error" in result:
+                error_msg = result["error"].get("message", "Unknown error")
+                logger.warning(f"Error getting object type for {ref}: {error_msg}")
+                return "Unknown"
+        except requests.exceptions.HTTPError as e:
+            error_detail = f"HTTP {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                if "error" in error_body:
+                    error_detail = error_body["error"].get("message", str(error_body))
+            except:
+                error_detail = e.response.text[:200] if e.response.text else str(e)
+            logger.warning(f"Error getting object type for {ref}: {error_detail}")
+            return "Unknown"
+        except Exception as e:
+            logger.warning(f"Error getting object type for {ref}: {e}")
             return "Unknown"
         
         # get_object_info3 returns: {"result": [{"infos": [[objid, name, type, ...]]}]}
