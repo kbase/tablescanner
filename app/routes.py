@@ -21,6 +21,7 @@ from app.utils.workspace import KBaseClient
 import shutil
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Header, Query, Cookie, Path, UploadFile, File
+from app.exceptions import InvalidFilterError
 
 from app.models import (
     TableDataRequest,
@@ -61,6 +62,8 @@ from app.utils.async_utils import run_sync_in_thread
 from app.utils.request_utils import TableRequestProcessor
 from app.config import settings
 from app.config_constants import MAX_LIMIT, DEFAULT_LIMIT
+from app.utils.cache import load_cache_metadata, save_cache_metadata
+
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -126,6 +129,38 @@ def get_auth_token(
         detail="Authorization required. Provide your KBase token via the Authorization header or kbase_session cookie."
     )
 
+
+
+async def _get_table_metadata(db_path, name, schema_service):
+    """
+    Helper to fetch metadata for a single table.
+    """
+    try:
+        # Run lightweight checks in thread
+        columns = await run_sync_in_thread(get_table_columns, db_path, name)
+        row_count = await run_sync_in_thread(get_table_row_count, db_path, name)
+        
+        display_name = name.replace("_", " ").title()
+        
+        # Build schema map
+        try:
+             table_schema = await run_sync_in_thread(
+                schema_service.get_table_schema, db_path, name
+            )
+             schema_map = {col["name"]: col["type"] for col in table_schema["columns"]}
+        except Exception:
+             schema_map = {col: "TEXT" for col in columns}
+
+        return {
+            "name": name,
+            "displayName": display_name,
+            "row_count": row_count,
+            "column_count": len(columns),
+            "schema": schema_map
+        }
+    except Exception:
+        logger.warning("Error getting table info for %s", name, exc_info=True)
+        return {"name": name, "displayName": name, "error_fallback": True}
 
 def get_cache_dir() -> FilePath:
     """Get configured cache directory."""
@@ -337,49 +372,71 @@ async def list_tables_by_object(
         schema_service = get_schema_service()
         
         # Process tables
-        for name in table_names:
-            try:
-                # Run lightweight checks in thread
-                columns = await run_sync_in_thread(get_table_columns, db_path, name)
-                row_count = await run_sync_in_thread(get_table_row_count, db_path, name)
-                
-                # Get display name (use table name as default)
-                display_name = name.replace("_", " ").title()
-                
-                tables.append({
-                    "name": name,
-                    "displayName": display_name,
-                    "row_count": row_count,
-                    "column_count": len(columns)
-                })
-                total_rows += row_count or 0
-                
-                # Build schema map with actual types
-                try:
-                    table_schema = await run_sync_in_thread(
-                        schema_service.get_table_schema, db_path, name
-                    )
-                    schemas[name] = {
-                        col["name"]: col["type"]
-                        for col in table_schema["columns"]
-                    }
-                except Exception:
-                    # Fallback to default type
-                    schemas[name] = {col: "TEXT" for col in columns}
-            except Exception:
-                logger.warning("Error getting table info for %s", name, exc_info=True)
-                tables.append({"name": name, "displayName": name})
+        # Parallelize metadata fetching
+        tasks = [
+            _get_table_metadata(db_path, name, schema_service) 
+            for name in table_names
+        ]
         
-        # Get object type (non-blocking)
+        results = await asyncio.gather(*tasks)
+        
+        for res in results:
+            if "error_fallback" in res:
+                tables.append({"name": res["name"], "displayName": res["displayName"]})
+                continue
+                
+            tables.append({
+                "name": res["name"],
+                "displayName": res["displayName"],
+                "row_count": res["row_count"],
+                "column_count": res["column_count"]
+            })
+            total_rows += res["row_count"] or 0
+            schemas[res["name"]] = res["schema"]
+        
+        # Get object type (with caching)
+        object_type = None
+        
+        # 1. Try to load from cache
         try:
-            # Use specific timeout for API call
-            object_type = await asyncio.wait_for(
-                run_sync_in_thread(get_object_type, berdl_table_id, token, kb_env),
-                timeout=settings.KBASE_API_TIMEOUT_SECONDS
-            )
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.warning(f"Could not get object type (non-critical): {e}")
-            object_type = None
+            # db_path is typically .../cache/sanitized_upa/tables.db
+            # So cache_subdir is the parent directory
+            cache_subdir = db_path.parent
+            metadata = load_cache_metadata(cache_subdir)
+            
+            if metadata and "object_type" in metadata:
+                object_type = metadata["object_type"]
+                logger.debug(f"Using cached object type for {berdl_table_id}: {object_type}")
+        except Exception as e:
+            logger.warning(f"Error reading cache metadata: {e}")
+
+        # 2. If not cached, fetch from API
+        if not object_type:
+            try:
+                # Use specific timeout for API call
+                object_type = await asyncio.wait_for(
+                    run_sync_in_thread(get_object_type, berdl_table_id, token, kb_env),
+                    timeout=settings.KBASE_API_TIMEOUT_SECONDS
+                )
+                
+                # 3. Save to cache
+                if object_type:
+                    try:
+                        save_cache_metadata(
+                            db_path.parent, 
+                            {
+                                "berdl_table_id": berdl_table_id,
+                                "object_type": object_type,
+                                "last_checked": datetime.utcnow().isoformat()
+                            }
+                        )
+                        logger.info(f"Cached object type for {berdl_table_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache metadata: {e}")
+                        
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"Could not get object type (non-critical): {e}")
+                object_type = None
         
         # Config-related fields (deprecated, kept for backward compatibility)
         config_fingerprint = None
@@ -644,6 +701,9 @@ async def query_table_data(
         
     except HTTPException:
         # Re-raise HTTP exceptions as-is (don't convert to 500)
+        raise
+    except InvalidFilterError:
+        # Allow invalid filter errors to be handled by main app exception handler (422)
         raise
     except Exception as e:
         # Log full traceback for debugging

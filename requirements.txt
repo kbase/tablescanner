@@ -9,3 +9,4 @@ requests>=2.31.0
 python-multipart>=0.0.20
 tqdm>=4.64.0
 minio>=7.2.20
+orjson>=3.9.10

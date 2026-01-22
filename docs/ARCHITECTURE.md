@@ -67,6 +67,9 @@ Manages SQLite database connections efficiently:
 -   **Read-Only**: The service never modifies the source SQLite files. This simplifies concurrency control (WAL mode).
 -   **Synchronous I/O in Async App**: We use `run_sync_in_thread` to offload blocking SQLite operations to a thread pool, keeping the FastAPI event loop responsive.
 -   **Local Caching**: We aggressively cache database files locally to avoid the high latency of downloading multi-GB files from KBase for every request.
+-   **Metadata Caching**: Object types are cached locally to minimize redundant KBase API calls.
+-   **Concurrency**: Table listing uses parallel metadata fetching (`asyncio.gather`) to resolve "N+1" query issues.
+-   **Compression & High-Performance serialization**: Production-ready configuration uses Gzip and ORJSON for maximum throughput.
 
 ## Security
 -   **Authentication**: All data access endpoints require a valid KBase Auth Token (`Authorization` header).

@@ -13,7 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.security import HTTPBearer, APIKeyCookie
+from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.routes import router
 from app.config import settings
@@ -136,7 +138,11 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan,
+        default_response_class=ORJSONResponse
     )
+
+    # Enable Gzip compression for responses > 1KB
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     # Add CORS middleware to allow cross-origin requests
     # Update CORS middleware to allow requests from the frontend

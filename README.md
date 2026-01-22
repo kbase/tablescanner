@@ -85,6 +85,10 @@ curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
 
 ## Performance & Optimization
 
+- **Gzip Compression**: Compresses large responses (>1KB) to reduce bandwidth usage.
+- **High-Performance JSON**: Uses `orjson` for fast JSON serialization.
+- **Parallel Metadata Fetching**: Retrieves table metadata concurrently for fast listing.
+- **Metadata Caching**: Caches object types locally to minimize KBase API calls.
 - **Connection Pooling**: Reuses database connections for up to 10 minutes of inactivity.
 - **Automatic Cleanup**: Expired caches are purged on startup. Uploaded databases automatically expire after **1 hour**.
 - **Query Caching**: 5-minute TTL, max 1000 entries per instance.

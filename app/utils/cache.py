@@ -173,6 +173,25 @@ def get_cache_info(cache_path: Path) -> dict[str, Any] | None:
 
 
 
+
+def save_cache_metadata(cache_subdir: Path, metadata: dict[str, Any]) -> None:
+    """
+    Save metadata to cache directory.
+    
+    Args:
+        cache_subdir: Cache subdirectory
+        metadata: Metadata dictionary to save
+    """
+    metadata_path = get_metadata_path(cache_subdir)
+    try:
+        ensure_cache_dir(metadata_path)
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        logger.debug(f"Saved metadata to {metadata_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save metadata to {metadata_path}: {e}")
+
+
 def load_cache_metadata(cache_subdir: Path) -> dict[str, Any] | None:
     """
     Load cache metadata.

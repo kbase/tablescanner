@@ -6,6 +6,7 @@ DATABASE_SCHEMA.md
 docs/personal/
 archive/
 docs/archive
+dummy.db
 
 .DS_Store
 .idea

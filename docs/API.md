@@ -16,6 +16,10 @@ The **TableScanner** service provides read-only access to SQLite databases store
 > **Note for Developers**: The `KB_SERVICE_AUTH_TOKEN` environment variable is available as a legacy fallback for local testing only. It should NOT be relied upon in production.
 
 ---
+## Performance
+- **Gzip Support**: Responses >1KB are automatically compressed if the `Accept-Encoding: gzip` header is present.
+- **Fast JSON**: All responses use optimized JSON serialization.
+---
 
 ## 1. Service Status
 

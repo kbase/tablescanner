@@ -129,6 +129,9 @@ class TableRequestProcessor:
         except (TableNotFoundError, InvalidFilterError):
             # Allow specific exceptions to bubble up to global handlers
             raise
+        except ValueError as e:
+            # Handle validation errors (e.g. invalid numeric conversion) from QueryService
+            raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
