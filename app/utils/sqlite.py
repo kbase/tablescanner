@@ -40,7 +40,7 @@ def list_tables(db_path: Path) -> list[str]:
         return tables
 
     except sqlite3.Error as e:
-        logger.error(f"Error listing tables from {db_path}: {e}")
+        logger.error("Error listing tables from %s: %s", db_path, e)
         raise
 
 
@@ -58,16 +58,18 @@ def get_table_columns(db_path: Path, table_name: str) -> list[str]:
         if not result:
             raise ValueError(f"Invalid table name: {table_name}")
         
-        # Use validated table name from sqlite_master to prevent SQL injection
+        # Use validated table name from sqlite_master and SQLite's quote() to prevent SQL injection
         validated_table_name = result[0]
-        cursor.execute(f"PRAGMA table_info(\"{validated_table_name}\")")
+        cursor.execute("SELECT quote(?)", (validated_table_name,))
+        quoted_table_name = cursor.fetchone()[0]
+        cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
 
         return columns
 
     except sqlite3.Error as e:
-        logger.error(f"Error getting columns for {table_name}: {e}")
+        logger.error("Error getting columns for %s: %s", table_name, e)
         raise
 
 
@@ -85,16 +87,18 @@ def get_table_row_count(db_path: Path, table_name: str) -> int:
         if not result:
             raise ValueError(f"Invalid table name: {table_name}")
         
-        # Use validated table name from sqlite_master to prevent SQL injection
+        # Use validated table name from sqlite_master and SQLite's quote() to prevent SQL injection
         validated_table_name = result[0]
-        cursor.execute(f"SELECT COUNT(*) FROM \"{validated_table_name}\"")
+        cursor.execute("SELECT quote(?)", (validated_table_name,))
+        quoted_table_name = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
         count = cursor.fetchone()[0]
         conn.close()
 
         return count
 
     except sqlite3.Error as e:
-        logger.error(f"Error counting rows in {table_name}: {e}")
+        logger.error("Error counting rows in %s: %s", table_name, e)
         raise
 
 
@@ -106,7 +110,9 @@ def validate_table_exists(db_path: Path, table_name: str) -> bool:
     try:
         tables = list_tables(db_path)
         return table_name in tables
-    except Exception:
+    except (sqlite3.Error, OSError, ValueError) as e:
+        # Any database-related error means we can't validate the table
+        logger.debug("Failed to validate table %s: %s", table_name, e)
         return False
 
 
@@ -128,11 +134,15 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
         validated_table = table_name
 
         # Get total row count
-        cursor.execute(f"SELECT COUNT(*) FROM \"{validated_table}\"")
+        cursor.execute("SELECT quote(?)", (validated_table,))
+        quoted_table_name = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
         row_count = cursor.fetchone()[0]
 
         # Get columns and types
-        cursor.execute(f"PRAGMA table_info(\"{validated_table}\")")
+        cursor.execute("SELECT quote(?)", (validated_table,))
+        quoted_table_name = cursor.fetchone()[0]
+        cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
         columns_info = cursor.fetchall()
         
         stats_columns = []
@@ -141,15 +151,18 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
             col_name = col['name']
             col_type = col['type']
             
+            # Get quoted column name for safe SQL construction
+            cursor.execute("SELECT quote(?)", (col_name,))
+            quoted_col_name = cursor.fetchone()[0]
+            
             # Base stats query
             # We use SUM(CASE WHEN ... IS NULL) instead of COUNT(col) logic sometimes to be explicit
             # but COUNT(col) counts non-nulls. So Nulls = Total - COUNT(col).
-            cursor.execute(f"""
+            cursor.execute("""
                 SELECT 
-                    COUNT("{col_name}") as non_null_count,
-                    COUNT(DISTINCT "{col_name}") as distinct_count
-                FROM "{validated_table}"
-            """)
+                    COUNT(""" + quoted_col_name + """) as non_null_count,
+                    COUNT(DISTINCT """ + quoted_col_name + """) as distinct_count
+                FROM """ + quoted_table_name)
             basic_stats = cursor.fetchone()
             non_null_count = basic_stats['non_null_count']
             null_count = row_count - non_null_count
@@ -169,48 +182,51 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
             
             if is_numeric and non_null_count > 0:
                 try:
-                    cursor.execute(f"""
+                    cursor.execute("""
                         SELECT 
-                            MIN("{col_name}"), 
-                            MAX("{col_name}"), 
-                            AVG("{col_name}")
-                        FROM "{validated_table}"
-                        WHERE "{col_name}" IS NOT NULL
+                            MIN(""" + quoted_col_name + """), 
+                            MAX(""" + quoted_col_name + """), 
+                            AVG(""" + quoted_col_name + """)
+                        FROM """ + quoted_table_name + """
+                        WHERE """ + quoted_col_name + """ IS NOT NULL
                     """)
                     num_stats = cursor.fetchone()
                     if num_stats[0] is not None:
                         col_stats["min"] = num_stats[0]
                         col_stats["max"] = num_stats[1]
                         col_stats["mean"] = num_stats[2]
-                except Exception:
+                except (sqlite3.Error, ValueError, TypeError) as e:
                     # Ignore errors in numeric aggregate (e.g. if column declared int but has strings)
-                    pass
+                    logger.debug("Numeric stats failed for column %s: %s", col_name, e)
             elif non_null_count > 0:
                 # For non-numeric, just get Min/Max
                 try:
-                    cursor.execute(f"""
-                        SELECT MIN("{col_name}"), MAX("{col_name}")
-                        FROM "{validated_table}"
-                        WHERE "{col_name}" IS NOT NULL
+                    cursor.execute("""
+                        SELECT MIN(""" + quoted_col_name + """), MAX(""" + quoted_col_name + """)
+                        FROM """ + quoted_table_name + """
+                        WHERE """ + quoted_col_name + """ IS NOT NULL
                     """)
                     str_stats = cursor.fetchone()
                     if str_stats[0] is not None:
                         col_stats["min"] = str_stats[0]
                         col_stats["max"] = str_stats[1]
-                except Exception:
-                    pass
+                except (sqlite3.Error, ValueError, TypeError) as e:
+                    # Ignore errors in string aggregate
+                    logger.debug("String stats failed for column %s: %s", col_name, e)
 
             # Get sample values (first 5 non-null distinct preferred, or just first 5)
             try:
-                cursor.execute(f"""
-                    SELECT DISTINCT "{col_name}"
-                    FROM "{validated_table}"
-                    WHERE "{col_name}" IS NOT NULL
+                cursor.execute("""
+                    SELECT DISTINCT """ + quoted_col_name + """
+                    FROM """ + quoted_table_name + """
+                    WHERE """ + quoted_col_name + """ IS NOT NULL
                     LIMIT 5
                 """)
                 samples = [row[0] for row in cursor.fetchall()]
                 col_stats["sample_values"] = samples
-            except Exception:
+            except (sqlite3.Error, ValueError, TypeError) as e:
+                # Failed to get sample values
+                logger.debug("Sample values failed for column %s: %s", col_name, e)
                 col_stats["sample_values"] = []
 
             stats_columns.append(col_stats)
@@ -225,5 +241,5 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
         }
 
     except sqlite3.Error as e:
-        logger.error(f"Error calculating stats for {table_name}: {e}")
+        logger.error("Error calculating stats for %s: %s", table_name, e)
         raise

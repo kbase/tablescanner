@@ -220,7 +220,7 @@ class KBaseClient:
                     error_detail = error_body["error"].get("message", str(error_body))
                 else:
                     error_detail = str(error_body)
-            except:
+            except Exception:
                 error_detail = e.response.text[:500] if e.response.text else str(e)
             logger.error(f"Workspace API HTTP error for {ref}: {error_detail}")
             raise ValueError(f"Workspace service error: {error_detail}")
@@ -301,7 +301,7 @@ class KBaseClient:
                 error_body = e.response.json()
                 if "error" in error_body:
                     error_detail = error_body["error"].get("message", str(error_body))
-            except:
+            except Exception:
                 error_detail = e.response.text[:200] if e.response.text else str(e)
             logger.warning(f"Error getting object type for {ref}: {error_detail}")
             return "Unknown"

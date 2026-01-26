@@ -92,51 +92,31 @@ class ConnectionPool:
                     # Connection bad, close and make new one
                     try:
                         conn.close()
-                    except Exception:
+                    except (sqlite3.Error, OSError) as e:
                         # Best-effort close; log at debug and continue with a fresh connection.
-                        logger.debug("Failed to close bad SQLite connection for %s", db_key, exc_info=True)
+                        logger.debug("Failed to close bad SQLite connection for %s: %s", db_key, e)
                     conn = self._create_new_connection(db_key)
 
             except queue.Empty:
-                # Pool is empty, if we haven't reached max capacity (logic hard to track with Queue size only),
-                # ideally we pre-fill or dynamic fill. 
-                # With standard Queue, we put connections IN. 
-                # Strategy: Initialize Queue with N "tokens" or create on demand?
-                # Alternative: On Queue.get, if empty, we wait.
-                # BUT, initially queue is empty.
-                # So we need a mechanism to create new connections if < MAX and queue empty.
-                # Let's simplify: 
-                # The queue holds *idle* connections.
-                # We need a semaphore for *total* connections?
-                #
-                # Let's use a standard sizing approach: 
-                # When getting, if queue empty and we can create more, create one.
-                # This requires tracking count. Sizing is tricky with just a Queue.
-                # 
-                # SIMPLIFIED APPROACH for SQLite: 
-                # Just use the Queue as a resource pool. Populate it on demand?
-                # No, standard pattern: 
-                # Queue initialized empty.
-                # If queue.empty():
-                #   if current connections < max: create new
-                #   else: wait on queue
-                #
-                # This requires tracking active count.
-                # Given strict timeline, let's just FILL the queue on first access up to MAX?
-                # Or lazily create.
-                
-                # Let's do lazy creation with a separate semaphore-like logic if needed, 
-                # Or just rely on Python's robust GC and just use a pool of created connections.
-                
-                # Refined Strategy:
-                # Queue contains available connections.
-                # If we get Empty, we check if we can create better?
-                # Actually, simpler: Pre-populate or lazily populate?
-                # Lazy: If invalid/closed, we discard.
-                #
-                # For this fix, let's use a "LifoQueue" or standard Queue.
-                # But to manage the *limit*, we need to know how many are out there.
-                raise TimeoutError(f"Timeout waiting for database connection: {db_path}")
+                # Pool is empty - try to create a new connection if under limit
+                with self._lock:
+                    # Check current pool size and total connections
+                    current_queue_size = pool_queue.qsize()
+                    # Estimate total connections: queue size + active connections
+                    # Since we can't track active connections perfectly, we'll be conservative
+                    if current_queue_size == 0 and len(self._pools.get(db_key, [(queue.Queue(), 0)])[0]._queue) < self.MAX_CONNECTIONS:
+                        # Create new connection on-demand
+                        try:
+                            conn = self._create_new_connection(db_key)
+                        except (sqlite3.Error, OSError, ValueError) as e:
+                            logger.error("Failed to create new connection for %s: %s", db_key, e)
+                            raise TimeoutError(f"Timeout waiting for database connection: {db_path}") from e
+                    else:
+                        # Wait for available connection
+                        try:
+                            conn = pool_queue.get(block=True, timeout=timeout)
+                        except queue.Empty:
+                            raise TimeoutError(f"Timeout waiting for database connection: {db_path}")
 
             yield conn
 
@@ -146,10 +126,10 @@ class ConnectionPool:
                 # Rollback uncommitted transaction to reset state
                 try:
                     conn.rollback()
-                except Exception:
+                except (sqlite3.Error, OSError, ValueError) as e:
                     # If rollback fails, the connection may be in a bad state; it will
                     # still be returned to the pool but future health checks will replace it.
-                    logger.debug("Failed to rollback SQLite connection for %s", db_key, exc_info=True)
+                    logger.debug("Failed to rollback SQLite connection for %s: %s", db_key, e)
                 
                 # Put back in queue
                 # Note: We must update the last access time for the POOL, not the connection
@@ -177,14 +157,14 @@ class ConnectionPool:
                 for _ in range(self.MAX_CONNECTIONS):
                     conn = self._create_new_connection(db_key)
                     q.put(conn)
-            except Exception as e:
-                logger.error(f"Error filling connection pool for {db_key}: {e}")
+            except (sqlite3.Error, OSError, ValueError) as e:
+                logger.error("Error filling connection pool for %s: %s", db_key, e)
                 # Close any created ones?
                 while not q.empty():
                     try:
                         q.get_nowait().close()
-                    except Exception:
-                        logger.debug("Failed to close SQLite connection during pool recovery.", exc_info=True)
+                    except (sqlite3.Error, OSError) as e:
+                        logger.debug("Failed to close SQLite connection during pool recovery: %s", e)
                 raise
             
             self._pools[db_key] = (q, time.time())
@@ -202,8 +182,8 @@ class ConnectionPool:
             conn.execute("PRAGMA cache_size=-64000") # 64MB
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("PRAGMA mmap_size=268435456") # 256MB
-        except sqlite3.Error as e:
-            logger.warning(f"Failed to apply optimizations: {e}")
+        except (sqlite3.Error, OSError) as e:
+            logger.warning("Failed to apply optimizations: %s", e)
             
         return conn
 
@@ -241,7 +221,7 @@ class ConnectionPool:
             for key in expired_keys:
                 q, _ = self._pools.pop(key)
                 self._close_pool_queue(q)
-                logger.info(f"Cleaned up expired pool for: {key}")
+                logger.info("Cleaned up expired pool for: %s", key)
 
     def _close_pool_queue(self, q: queue.Queue):
         """Close all connections in a queue."""
@@ -249,9 +229,9 @@ class ConnectionPool:
             try:
                 conn = q.get_nowait()
                 conn.close()
-            except Exception:
+            except (sqlite3.Error, OSError) as e:
                 # Best-effort close; swallow errors but record at debug.
-                logger.debug("Failed to close SQLite connection during pool cleanup.", exc_info=True)
+                logger.debug("Failed to close SQLite connection during pool cleanup: %s", e)
 
     def get_stats(self) -> dict[str, Any]:
         """Get pool statistics."""
