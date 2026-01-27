@@ -44,6 +44,11 @@ def list_tables(db_path: Path) -> list[str]:
         raise
 
 
+def _quote_identifier(name: str) -> str:
+    """Quote an identifier (table or column name) for SQLite."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def get_table_columns(db_path: Path, table_name: str) -> list[str]:
     """
     Get column names for a specific table.
@@ -58,10 +63,9 @@ def get_table_columns(db_path: Path, table_name: str) -> list[str]:
         if not result:
             raise ValueError(f"Invalid table name: {table_name}")
         
-        # Use validated table name from sqlite_master and SQLite's quote() to prevent SQL injection
         validated_table_name = result[0]
-        cursor.execute("SELECT quote(?)", (validated_table_name,))
-        quoted_table_name = cursor.fetchone()[0]
+        # PRAGMA table_info accepts string literals or identifiers, but let's be consistent
+        quoted_table_name = _quote_identifier(validated_table_name)
         cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
@@ -87,10 +91,8 @@ def get_table_row_count(db_path: Path, table_name: str) -> int:
         if not result:
             raise ValueError(f"Invalid table name: {table_name}")
         
-        # Use validated table name from sqlite_master and SQLite's quote() to prevent SQL injection
         validated_table_name = result[0]
-        cursor.execute("SELECT quote(?)", (validated_table_name,))
-        quoted_table_name = cursor.fetchone()[0]
+        quoted_table_name = _quote_identifier(validated_table_name)
         cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
         count = cursor.fetchone()[0]
         conn.close()
@@ -100,7 +102,6 @@ def get_table_row_count(db_path: Path, table_name: str) -> int:
     except sqlite3.Error as e:
         logger.error("Error counting rows in %s: %s", table_name, e)
         raise
-
 
 
 def validate_table_exists(db_path: Path, table_name: str) -> bool:
@@ -134,14 +135,11 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
         validated_table = table_name
 
         # Get total row count
-        cursor.execute("SELECT quote(?)", (validated_table,))
-        quoted_table_name = cursor.fetchone()[0]
+        quoted_table_name = _quote_identifier(validated_table)
         cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
         row_count = cursor.fetchone()[0]
 
         # Get columns and types
-        cursor.execute("SELECT quote(?)", (validated_table,))
-        quoted_table_name = cursor.fetchone()[0]
         cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
         columns_info = cursor.fetchall()
         
@@ -151,9 +149,8 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
             col_name = col['name']
             col_type = col['type']
             
-            # Get quoted column name for safe SQL construction
-            cursor.execute("SELECT quote(?)", (col_name,))
-            quoted_col_name = cursor.fetchone()[0]
+            # Use proper identifier quoting
+            quoted_col_name = _quote_identifier(col_name)
             
             # Base stats query
             # We use SUM(CASE WHEN ... IS NULL) instead of COUNT(col) logic sometimes to be explicit
@@ -171,6 +168,7 @@ def get_table_statistics(db_path: Path, table_name: str) -> dict:
             col_stats = {
                 "column": col_name,
                 "type": col_type,
+                "non_null_count": non_null_count,
                 "null_count": null_count,
                 "distinct_count": distinct_count,
                 "sample_values": []

@@ -61,6 +61,7 @@ def setup_cache_with_db(cache_dir: Path, upa: str) -> Path:
 class TestAdvancedFeatures(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        self.client.headers["Authorization"] = "Bearer dummy_token"
         # Setup a real database in the configured cache directory
         self.test_upa = "12345/Test/1"
         self.db_path = setup_cache_with_db(Path(settings.CACHE_DIR), self.test_upa)

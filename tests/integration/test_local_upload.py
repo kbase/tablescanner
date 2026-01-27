@@ -150,5 +150,6 @@ def test_upload_and_get_stats(dummy_sqlite_db):
     # Check column stats
     cols = {c["column"]: c for c in stats["columns"]}
     assert "name" in cols
+    assert cols["name"]["non_null_count"] == 2
     assert cols["name"]["distinct_count"] == 2
     assert "Alpha" in cols["name"]["sample_values"]

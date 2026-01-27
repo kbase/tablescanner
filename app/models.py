@@ -461,6 +461,7 @@ class ColumnStatistic(BaseModel):
     """Column statistics."""
     column: str = Field(..., description="Column name")
     type: str = Field(..., description="Column type")
+    non_null_count: int = Field(0, description="Number of non-NULL values")
     null_count: int = Field(0, description="Number of NULL values")
     distinct_count: int = Field(0, description="Number of distinct values")
     min: Any = Field(None, description="Minimum value")

@@ -15,7 +15,7 @@ Also supports legacy endpoints for backwards compatibility.
 import asyncio
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path as FilePath
 from app.utils.workspace import KBaseClient
 import shutil
@@ -202,7 +202,7 @@ async def health_check():
         
         return HealthResponse(
             status="ok",
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat(),
             mode="cached_sqlite",
             data_dir=str(settings.CACHE_DIR),
             config_dir=str(FilePath(settings.CACHE_DIR) / "configs"),
@@ -427,7 +427,7 @@ async def list_tables_by_object(
                             {
                                 "berdl_table_id": berdl_table_id,
                                 "object_type": object_type,
-                                "last_checked": datetime.utcnow().isoformat()
+                                "last_checked": datetime.now(timezone.utc).isoformat()
                             }
                         )
                         logger.info(f"Cached object type for {berdl_table_id}")

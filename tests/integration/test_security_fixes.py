@@ -55,6 +55,7 @@ def setup_cache_with_db(cache_dir: Path, upa: str) -> Path:
 class TestSecurityFixes(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        self.client.headers["Authorization"] = "Bearer dummy_token"
         self.test_upa = "99999/Security/1"
         self.db_path = setup_cache_with_db(Path(settings.CACHE_DIR), self.test_upa)
 

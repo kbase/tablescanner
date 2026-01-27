@@ -4,15 +4,20 @@ version = "1.0.0"
 description = "TableScanner FastAPI Application"
 requires-python = ">=3.13"
 dependencies = [
+    "click>=8.0.0",
     "fastapi[standard]>=0.124.4",
     "minio>=7.2.20",
     "orjson>=3.9.10",
+    "pandas>=1.3.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.0.0",
     "python-multipart>=0.0.20",
+    "PyYAML>=6.0",
     "requests>=2.31.0",
     "tqdm>=4.64.0",
     "uvicorn>=0.38.0",
+    "pytest>=7.0.0",
+    "httpx>=0.24.0",
 ]
 
 [build-system]
@@ -21,3 +26,5 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+[tool.pytest.ini_options]
+norecursedirs = ["lib"]
