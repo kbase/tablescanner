@@ -86,6 +86,11 @@ class Settings(BaseSettings):
         default=10.0,
         description="Timeout in seconds for KBase API calls"
     )
+    
+    MAX_UPLOAD_SIZE_MB: int = Field(
+        default=500,
+        description="Maximum file upload size in megabytes"
+    )
 
 
 # Global settings instance - loaded at module import

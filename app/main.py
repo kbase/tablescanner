@@ -148,9 +148,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=False,
+        allow_credentials=True,  # Allow credentials for cookie-based auth
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition", "Content-Length", "X-Request-Id"],  # Expose headers for file downloads/uploads
+        max_age=3600,  # Cache preflight requests for 1 hour
     )
 
     # Store settings in app state for access throughout the application

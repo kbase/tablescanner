@@ -231,14 +231,28 @@ async def health_check():
     Returns a handle that can be used inplace of a KBase workspace reference.
     
     The handle format is `local:{uuid}`.
+    
+    **Note**: Maximum file size is controlled by the `MAX_UPLOAD_SIZE_MB` setting.
     """
 )
 async def upload_database(
     file: UploadFile = File(..., description="SQLite database file")
 ):
     try:
-        if not file.filename.endswith(('.db', '.sqlite', '.sqlite3')):
-             raise HTTPException(status_code=400, detail="File must be a SQLite database (.db, .sqlite, .sqlite3)")
+        # Check file extension
+        if not file.filename or not file.filename.endswith(('.db', '.sqlite', '.sqlite3')):
+            raise HTTPException(
+                status_code=400, 
+                detail="File must be a SQLite database (.db, .sqlite, .sqlite3)"
+            )
+        
+        # Check Content-Length header if available (early rejection for large files)
+        max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        if file.size and file.size > max_size_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB, got {file.size / (1024*1024):.1f}MB"
+            )
         
         # Validate SQLite header
         # SQLite files start with "SQLite format 3\0"
@@ -246,8 +260,8 @@ async def upload_database(
         await file.seek(0)
         
         if header != b"SQLite format 3\0":
-             logger.warning(f"Invalid SQLite header for upload {file.filename}: {header}")
-             raise HTTPException(status_code=400, detail="Invalid SQLite file format (header mismatch)")
+            logger.warning(f"Invalid SQLite header for upload {file.filename}: {header}")
+            raise HTTPException(status_code=400, detail="Invalid SQLite file format (header mismatch)")
 
         # Generate handle
         file_uuid = str(uuid4())
@@ -260,11 +274,27 @@ async def upload_database(
         
         destination = upload_dir / f"{file_uuid}.db"
         
+        # Stream the file to disk in chunks to handle large files efficiently
         try:
+            total_size = 0
+            chunk_size = 1024 * 1024  # 1MB chunks
             with destination.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    # Check size during streaming
+                    if total_size > max_size_bytes:
+                        buffer.close()
+                        destination.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB"
+                        )
+                    buffer.write(chunk)
         finally:
-            file.file.close()
+            await file.close()
             
         return UploadDBResponse(
             handle=handle,
