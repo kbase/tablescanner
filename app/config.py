@@ -91,6 +91,11 @@ class Settings(BaseSettings):
         default=500,
         description="Maximum file upload size in megabytes"
     )
+    
+    MAX_UPLOAD_STORAGE_GB: int = Field(
+        default=10,
+        description="Maximum total storage for the uploads directory in gigabytes"
+    )
 
 
 # Global settings instance - loaded at module import

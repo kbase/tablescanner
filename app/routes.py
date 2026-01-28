@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path as FilePath
 from app.utils.workspace import KBaseClient
 import shutil
+import hashlib
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Header, Query, Cookie, Path, UploadFile, File
 from app.exceptions import InvalidFilterError
@@ -255,7 +256,6 @@ async def upload_database(
             )
         
         # Validate SQLite header
-        # SQLite files start with "SQLite format 3\0"
         header = await file.read(16)
         await file.seek(0)
         
@@ -263,22 +263,39 @@ async def upload_database(
             logger.warning(f"Invalid SQLite header for upload {file.filename}: {header}")
             raise HTTPException(status_code=400, detail="Invalid SQLite file format (header mismatch)")
 
-        # Generate handle
-        file_uuid = str(uuid4())
-        handle = f"local:{file_uuid}"
-        
-        # Save to uploads directory
         cache_dir = get_cache_dir()
         upload_dir = cache_dir / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check total upload directory size (Quota)
+        try:
+            total_uploads_size = sum(f.stat().st_size for f in upload_dir.glob("*.db") if f.is_file())
+            max_storage_bytes = settings.MAX_UPLOAD_STORAGE_GB * 1024 * 1024 * 1024
+            if total_uploads_size > max_storage_bytes:
+                # Trigger cleanup if we're over quota
+                from app.utils.cache import cleanup_old_caches
+                cleanup_old_caches(cache_dir)
+                # Re-check
+                total_uploads_size = sum(f.stat().st_size for f in upload_dir.glob("*.db") if f.is_file())
+                if total_uploads_size > max_storage_bytes:
+                    raise HTTPException(
+                        status_code=507, 
+                        detail="Upload storage quota exceeded. Please try again later."
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error checking upload quota: {e}")
+
+        # Stream the file to disk and calculate hash for deduplication
+        file_hash = hashlib.sha256()
+        temp_file_uuid = str(uuid4())
+        temp_destination = upload_dir / f"{temp_file_uuid}.tmp"
         
-        destination = upload_dir / f"{file_uuid}.db"
-        
-        # Stream the file to disk in chunks to handle large files efficiently
         try:
             total_size = 0
             chunk_size = 1024 * 1024  # 1MB chunks
-            with destination.open("wb") as buffer:
+            with temp_destination.open("wb") as buffer:
                 while True:
                     chunk = await file.read(chunk_size)
                     if not chunk:
@@ -287,19 +304,39 @@ async def upload_database(
                     # Check size during streaming
                     if total_size > max_size_bytes:
                         buffer.close()
-                        destination.unlink(missing_ok=True)
+                        temp_destination.unlink(missing_ok=True)
                         raise HTTPException(
                             status_code=413,
                             detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB"
                         )
                     buffer.write(chunk)
+                    file_hash.update(chunk)
         finally:
             await file.close()
+            
+        # Deduplication check
+        final_hash = file_hash.hexdigest()
+        handle = f"local:{final_hash}"
+        final_destination = upload_dir / f"{final_hash}.db"
+        
+        if final_destination.exists():
+            # Duplicate found, delete the temp file and return existing handle
+            temp_destination.unlink(missing_ok=True)
+            logger.info(f"Duplicate upload detected: {final_hash}. Using existing file.")
+            return UploadDBResponse(
+                handle=handle,
+                filename=file.filename,
+                size_bytes=final_destination.stat().st_size,
+                message="Database already exists (deduplicated)"
+            )
+        else:
+            # Atomic rename from temp to final hash-based name
+            temp_destination.rename(final_destination)
             
         return UploadDBResponse(
             handle=handle,
             filename=file.filename,
-            size_bytes=destination.stat().st_size,
+            size_bytes=final_destination.stat().st_size,
             message="Database uploaded successfully"
         )
 
