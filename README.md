@@ -83,6 +83,23 @@ curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
      "http://localhost:8000/table-data"
 ```
 
+### 5. Multi-Database Objects (v2.1)
+For objects containing multiple pangenomes/databases:
+
+```bash
+# List all databases in an object
+curl -H "Authorization: Bearer $KB_TOKEN" \
+     "http://localhost:8000/object/76990/7/2/databases"
+
+# List tables in a specific database
+curl -H "Authorization: Bearer $KB_TOKEN" \
+     "http://localhost:8000/object/76990/7/2/db/pg_ecoli_k12/tables"
+
+# Query data from a specific database
+curl -H "Authorization: Bearer $KB_TOKEN" \
+     "http://localhost:8000/object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data?limit=100"
+```
+
 ## Performance & Optimization
 
 - **Gzip Compression**: Compresses large responses (>1KB) to reduce bandwidth usage.
