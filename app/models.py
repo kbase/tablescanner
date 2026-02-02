@@ -121,6 +121,15 @@ class TableInfo(BaseModel):
     column_count: int | None = Field(None, description="Number of columns", examples=[18])
 
 
+class DatabaseInfo(BaseModel):
+    """Information about a single database within a workspace object."""
+    db_name: str = Field(..., description="Database identifier (e.g., pangenome_id or filename)", examples=["pg_ecoli_k12"])
+    db_display_name: str | None = Field(None, description="Human-readable name", examples=["E. coli K-12"])
+    tables: list[TableInfo] = Field(default_factory=list, description="Tables within this database")
+    row_count: int | None = Field(None, description="Total rows across all tables")
+    schemas: dict | None = Field(None, description="Column types per table: {table_name: {column: sql_type}}")
+
+
 class TableListResponse(BaseModel):
     """Response for listing tables in a database."""
     berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
@@ -182,6 +191,20 @@ class TableListResponse(BaseModel):
     api_version: str = Field(
         "2.0",
         description="API version for response format compatibility"
+    )
+    
+    # Multi-database support
+    databases: list[DatabaseInfo] | None = Field(
+        None,
+        description="List of databases in this object (for multi-DB objects)",
+        examples=[[
+            {"db_name": "pg_ecoli_k12", "db_display_name": "E. coli K-12", "tables": []},
+            {"db_name": "pg_ecoli_o157", "db_display_name": "E. coli O157:H7", "tables": []}
+        ]]
+    )
+    has_multiple_databases: bool = Field(
+        False,
+        description="Whether this object contains multiple databases"
     )
 
 

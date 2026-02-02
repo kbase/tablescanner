@@ -29,6 +29,7 @@ from app.models import (
     TableDataResponse,
     TableListResponse,
     TableInfo,
+    DatabaseInfo,
     CacheResponse,
     ServiceStatus,
     TableSchemaResponse,
@@ -44,6 +45,7 @@ from app.models import (
 )
 from app.utils.workspace import (
     download_pangenome_db,
+    download_all_pangenome_dbs,
     get_object_type,
 )
 from app.utils.sqlite import (
@@ -666,6 +668,314 @@ async def get_table_stats(
         raise
     except Exception as e:
         logger.error(f"Error calculating stats: {e}", exc_info=True)
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
+# =============================================================================
+# MULTI-DATABASE ENDPOINTS (Path-based routing)
+# /object/{ws_ref}/databases - List all databases in an object
+# /object/{ws_ref}/db/{db_name}/tables - List tables in a specific database
+# /object/{ws_ref}/db/{db_name}/tables/{table}/data - Query data from specific DB
+# =============================================================================
+
+@router.get(
+    "/object/{ws_ref:path}/databases",
+    tags=["Multi-Database"],
+    response_model=TableListResponse,
+    summary="List all databases in a workspace object",
+    description="""
+    List all databases available in a BERDLTables object.
+    
+    For multi-pangenome objects, this returns information about each database
+    including its name, display name, and table list.
+    
+    **New in v2.1**: Supports objects with multiple pangenomes.
+    """,
+    responses={
+        200: {"description": "Successfully retrieved database list"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Object not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def list_databases_in_object(
+    ws_ref: str = Path(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2"]),
+    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    authorization: str | None = Header(None, description="KBase authentication token"),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie")
+):
+    """List all databases within a workspace object."""
+    try:
+        token = get_auth_token(authorization, kbase_session)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Download all databases from the object
+        db_infos = await run_sync_in_thread(
+            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
+        )
+        
+        schema_service = get_schema_service()
+        databases = []
+        all_tables = []
+        total_rows = 0
+        
+        for db_info in db_infos:
+            db_path = db_info["db_path"]
+            db_name = db_info["db_name"]
+            db_display_name = db_info["db_display_name"]
+            
+            # List tables for this database
+            table_names = await run_sync_in_thread(list_tables, db_path)
+            
+            # Get metadata for each table
+            tasks = [
+                _get_table_metadata(db_path, name, schema_service)
+                for name in table_names
+            ]
+            results = await asyncio.gather(*tasks)
+            
+            db_tables = []
+            db_schemas = {}
+            db_total_rows = 0
+            
+            for res in results:
+                if "error_fallback" in res:
+                    db_tables.append(TableInfo(name=res["name"], row_count=None, column_count=None))
+                    continue
+                    
+                db_tables.append(TableInfo(
+                    name=res["name"],
+                    row_count=res["row_count"],
+                    column_count=res["column_count"]
+                ))
+                db_total_rows += res["row_count"] or 0
+                db_schemas[res["name"]] = res["schema"]
+                all_tables.append(TableInfo(
+                    name=f"{db_name}/{res['name']}",  # Prefixed with db_name for disambiguation
+                    row_count=res["row_count"],
+                    column_count=res["column_count"]
+                ))
+            
+            total_rows += db_total_rows
+            databases.append(DatabaseInfo(
+                db_name=db_name,
+                db_display_name=db_display_name,
+                tables=db_tables,
+                row_count=db_total_rows,
+                schemas=db_schemas
+            ))
+        
+        # Get object type
+        object_type = None
+        try:
+            object_type = await asyncio.wait_for(
+                run_sync_in_thread(get_object_type, berdl_table_id, token, kb_env),
+                timeout=settings.KBASE_API_TIMEOUT_SECONDS
+            )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Could not get object type: {e}")
+        
+        return TableListResponse(
+            berdl_table_id=berdl_table_id,
+            object_type=object_type or "BERDLTables",
+            tables=all_tables,  # Flattened list for backward compat
+            databases=databases,
+            has_multiple_databases=len(databases) > 1,
+            total_rows=total_rows,
+            source="Downloaded",
+            api_version="2.1"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing databases: {e}", exc_info=True)
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
+@router.get(
+    "/object/{ws_ref:path}/db/{db_name}/tables",
+    tags=["Multi-Database"],
+    response_model=TableListResponse,
+    summary="List tables in a specific database",
+    description="""
+    List all tables in a specific database within a multi-database object.
+    
+    Use this endpoint when working with objects containing multiple pangenomes.
+    The db_name should match one of the database names returned by /databases endpoint.
+    """,
+    responses={
+        200: {"description": "Successfully retrieved table list"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Database not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def list_tables_in_database(
+    ws_ref: str = Path(..., description="KBase workspace object reference", examples=["76990/7/2"]),
+    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12"]),
+    kb_env: str = Query("appdev", description="KBase environment"),
+    authorization: str | None = Header(None, description="KBase authentication token"),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie")
+):
+    """List tables in a specific database within an object."""
+    try:
+        token = get_auth_token(authorization, kbase_session)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Download all databases (or use cache)
+        db_infos = await run_sync_in_thread(
+            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
+        )
+        
+        # Find the requested database
+        target_db = None
+        for db_info in db_infos:
+            if db_info["db_name"] == db_name:
+                target_db = db_info
+                break
+        
+        if not target_db:
+            available_dbs = [d["db_name"] for d in db_infos]
+            raise HTTPException(
+                status_code=404,
+                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+            )
+        
+        db_path = target_db["db_path"]
+        schema_service = get_schema_service()
+        
+        # List and process tables
+        table_names = await run_sync_in_thread(list_tables, db_path)
+        tasks = [
+            _get_table_metadata(db_path, name, schema_service)
+            for name in table_names
+        ]
+        results = await asyncio.gather(*tasks)
+        
+        tables = []
+        schemas = {}
+        total_rows = 0
+        
+        for res in results:
+            if "error_fallback" in res:
+                tables.append(TableInfo(name=res["name"], row_count=None, column_count=None))
+                continue
+                
+            tables.append(TableInfo(
+                name=res["name"],
+                row_count=res["row_count"],
+                column_count=res["column_count"]
+            ))
+            total_rows += res["row_count"] or 0
+            schemas[res["name"]] = res["schema"]
+        
+        return TableListResponse(
+            berdl_table_id=f"{berdl_table_id}/{db_name}",
+            object_type="BERDLTables",
+            tables=tables,
+            schemas=schemas,
+            total_rows=total_rows,
+            source="Cache" if target_db["db_path"].exists() else "Downloaded",
+            api_version="2.1"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing tables in database: {e}", exc_info=True)
+        error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
+        if settings.DEBUG:
+            error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
+@router.get(
+    "/object/{ws_ref:path}/db/{db_name}/tables/{table_name}/data",
+    tags=["Multi-Database"],
+    response_model=TableDataResponse,
+    summary="Query data from a specific database",
+    description="""
+    Query table data from a specific database within a multi-database object.
+    
+    This is the recommended endpoint for multi-pangenome objects as it
+    explicitly specifies which database to query.
+    """,
+    responses={
+        200: {"description": "Successfully retrieved table data"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Database or table not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def get_table_data_from_database(
+    ws_ref: str = Path(..., description="KBase workspace object reference", examples=["76990/7/2"]),
+    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12"]),
+    table_name: str = Path(..., description="Name of the table to query", examples=["Genes"]),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Maximum rows to return"),
+    offset: int = Query(0, ge=0, description="Number of rows to skip"),
+    sort_column: str | None = Query(None, description="Column to sort by"),
+    sort_order: str | None = Query("ASC", description="Sort order: ASC or DESC"),
+    search: str | None = Query(None, description="Global text search"),
+    kb_env: str = Query("appdev", description="KBase environment"),
+    authorization: str | None = Header(None, description="KBase authentication token"),
+    kbase_session: str | None = Cookie(None, description="KBase session cookie")
+):
+    """Query data from a specific table in a specific database."""
+    try:
+        token = get_auth_token(authorization, kbase_session)
+        cache_dir = get_cache_dir()
+        berdl_table_id = ws_ref
+        
+        # Download all databases (or use cache)
+        db_infos = await run_sync_in_thread(
+            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
+        )
+        
+        # Find the requested database
+        target_db = None
+        for db_info in db_infos:
+            if db_info["db_name"] == db_name:
+                target_db = db_info
+                break
+        
+        if not target_db:
+            available_dbs = [d["db_name"] for d in db_infos]
+            raise HTTPException(
+                status_code=404,
+                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+            )
+        
+        db_path = target_db["db_path"]
+        
+        # Validate table exists
+        await ensure_table_accessible(db_path, table_name)
+        
+        result = await TableRequestProcessor.process_data_request(
+            db_path=db_path,
+            table_name=table_name,
+            limit=limit,
+            offset=offset,
+            sort_column=sort_column,
+            sort_order=sort_order or "ASC",
+            search_value=search,
+            handle_ref_or_id=f"{berdl_table_id}/{db_name}"
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error querying data from database: {e}", exc_info=True)
         error_detail = str(e) if str(e) else f"Error: {type(e).__name__}"
         if settings.DEBUG:
             error_detail += f"\n\nTraceback:\n{traceback.format_exc()}"

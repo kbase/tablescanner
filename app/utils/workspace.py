@@ -510,6 +510,83 @@ def download_pangenome_db(
     return db_path
 
 
+def download_all_pangenome_dbs(
+    berdl_table_id: str,
+    auth_token: str,
+    cache_dir: Path,
+    kb_env: str = "appdev"
+) -> list[dict]:
+    """
+    Download ALL SQLite databases for a BERDL object with multiple pangenomes.
+    
+    For multi-pangenome objects, each pangenome has its own database.
+    Each database is stored in: {cache_dir}/{sanitized_upa}/{db_name}/tables.db
+    
+    Args:
+        berdl_table_id: KBase UPA reference (e.g., "76990/7/2")
+        auth_token: KBase authentication token
+        cache_dir: Local cache directory
+        kb_env: KBase environment (appdev, ci, prod)
+        
+    Returns:
+        List of dicts with db_name, db_display_name, db_path, handle_ref
+    """
+    cache_dir = Path(cache_dir)
+    base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
+    
+    # Fetch object metadata to get all pangenome handles
+    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    pangenome_data = obj_data.get("pangenome_data", [])
+    
+    if not pangenome_data:
+        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+    
+    databases = []
+    client = KBaseClient(auth_token, kb_env, cache_dir)
+    
+    for pg in pangenome_data:
+        handle_ref = pg.get("sqllite_tables_handle_ref")
+        if not handle_ref:
+            logger.warning(f"Pangenome missing handle_ref: {pg.get('pangenome_id', 'unknown')}")
+            continue
+            
+        # Use pangenome_id as the db_name, or generate one from handle
+        db_name = pg.get("pangenome_id") or f"db_{handle_ref.replace('KBH_', '')}"
+        db_display_name = pg.get("pangenome_taxonomy") or db_name
+        
+        # Create per-database subdirectory
+        db_dir = base_dir / db_name
+        db_path = db_dir / "tables.db"
+        
+        # Fast path: use cached file if exists
+        if not db_path.exists():
+            db_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+                logger.info(f"Downloaded database '{db_name}' to: {db_path}")
+            except Exception as e:
+                temp_path.unlink(missing_ok=True)
+                logger.error(f"Failed to download database '{db_name}': {e}")
+                continue
+        else:
+            logger.info(f"Using cached database '{db_name}': {db_path}")
+        
+        databases.append({
+            "db_name": db_name,
+            "db_display_name": db_display_name,
+            "db_path": db_path,
+            "handle_ref": handle_ref
+        })
+    
+    if not databases:
+        raise ValueError(f"Failed to download any databases from {berdl_table_id}")
+    
+    return databases
+
+
 def get_object_info(
     object_ref: str,
     auth_token: str,
