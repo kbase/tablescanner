@@ -10,7 +10,7 @@ RUN mkdir -p lib && \
     cd ..
 
 # Add KBUtilLib to PYTHONPATH so it can be imported
-ENV PYTHONPATH="/app/lib/KBUtilLib/src"
+ENV PYTHONPATH=/app/lib/KBUtilLib/src:${PYTHONPATH}
 
 # Copy application code and dependencies
 COPY app ./app

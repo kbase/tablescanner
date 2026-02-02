@@ -4,15 +4,16 @@ TableScanner is a production-grade microservice for querying tabular data from K
 
 ## Features
 
-- **Data Access**: Query SQLite databases from KBase objects and handles.
-- **Local Uploads**: Upload local SQLite files (`.db`, `.sqlite`) for temporary access and testing.
-- **User-Driven Auth**: Secure access where each user provides their own KBase token.
-- **Type-Aware Filtering**: Automatic numeric conversion for proper filtering results.
-- **Advanced Operators**: Support for `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `not_in`, `between`, `is_null`, `is_not_null`.
-- **Aggregations**: `GROUP BY` support with `count`, `sum`, `avg`, `min`, `max`, `stddev`, `variance`, `distinct_count`.
-- **Table Statistics**: Rich column statistics including null counts, distinct counts, min/max/mean, and sample values.
-- **Full-Text Search**: FTS5 support with automatic virtual table creation.
-- **Automatic Operations**: Lifecycle management for connection pooling, query caching, and automatic disk cleanup.
+- **Data Access**: Query SQLite databases from KBase objects and handles
+- **Multi-Database Support**: Access objects containing multiple pangenomes (v2.1)
+- **Local Uploads**: Upload local SQLite files (`.db`, `.sqlite`) for temporary access
+- **User-Driven Auth**: Secure access where each user provides their own KBase token
+- **Type-Aware Filtering**: Automatic numeric conversion for proper filtering results
+- **Advanced Operators**: Support for `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `not_in`, `between`, `is_null`, `is_not_null`
+- **Aggregations**: `GROUP BY` support with `count`, `sum`, `avg`, `min`, `max`, `stddev`, `variance`, `distinct_count`
+- **Table Statistics**: Rich column statistics including null counts, distinct counts, min/max/mean, and sample values
+- **Full-Text Search**: FTS5 support with automatic virtual table creation
+- **Automatic Operations**: Lifecycle management for connection pooling, query caching, and automatic disk cleanup
 
 ## Quick Start
 
@@ -31,13 +32,21 @@ cp .env.example .env
 ./scripts/dev.sh
 ```
 
+## Base URL
+
+| Environment | URL |
+|-------------|-----|
+| **AppDev** | `https://appdev.kbase.us/services/berdl_table_scanner` |
+| **Production** | `https://kbase.us/services/berdl_table_scanner` |
+| **Local** | `http://localhost:8000` |
+
 ## Authentication
 
 **Each user must provide their own KBase authentication token.** The service prioritizes user-provided tokens over shared service tokens.
 
 - **Header (Recommended)**: `Authorization: Bearer <token>`
 - **Cookie**: `kbase_session=<token>` (Used by DataTables Viewer)
-- **Legacy Fallback**: `KB_SERVICE_AUTH_TOKEN` in `.env` is for **local testing only**.
+- **Legacy Fallback**: `KB_SERVICE_AUTH_TOKEN` in `.env` is for **local testing only**
 
 ## API Usage Examples
 
@@ -45,9 +54,9 @@ cp .env.example .env
 Upload a SQLite file to receive a temporary handle.
 
 ```bash
-curl -X POST "http://localhost:8000/upload" \
+curl -X POST "https://appdev.kbase.us/services/berdl_table_scanner/upload" \
      -F "file=@/path/to/my_data.db"
-# Returns: {"handle": "local:a1b2-c3d4", ...}
+# Returns: {"handle": "local:sha256hash", ...}
 ```
 
 ### 2. List Tables
@@ -55,7 +64,7 @@ Works with KBase UPA or the local handle returned above.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/tables"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
 ```
 
 ### 3. Get Table Statistics
@@ -63,7 +72,7 @@ Retrieve detailed column metrics and sample values.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/tables/Genes/stats"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/stats"
 ```
 
 ### 4. Advanced Query (POST)
@@ -80,7 +89,7 @@ curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
          {"column": "gene_length", "operator": "gt", "value": 1000}
        ]
      }' \
-     "http://localhost:8000/table-data"
+     "https://appdev.kbase.us/services/berdl_table_scanner/table-data"
 ```
 
 ### 5. Multi-Database Objects (v2.1)
@@ -89,27 +98,28 @@ For objects containing multiple pangenomes/databases:
 ```bash
 # List all databases in an object
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/databases"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/databases"
 
 # List tables in a specific database
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/db/pg_ecoli_k12/tables"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables"
 
 # Query data from a specific database
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "http://localhost:8000/object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data?limit=100"
+     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data?limit=100"
 ```
 
 ## Performance & Optimization
 
-- **Gzip Compression**: Compresses large responses (>1KB) to reduce bandwidth usage.
-- **High-Performance JSON**: Uses `orjson` for fast JSON serialization.
-- **Parallel Metadata Fetching**: Retrieves table metadata concurrently for fast listing.
-- **Metadata Caching**: Caches object types locally to minimize KBase API calls.
-- **Connection Pooling**: Reuses database connections for up to 10 minutes of inactivity.
-- **Automatic Cleanup**: Expired caches are purged on startup. Uploaded databases automatically expire after **1 hour**.
-- **Query Caching**: 5-minute TTL, max 1000 entries per instance.
-- **Atomic Renaming**: Ensures file integrity during downloads and uploads.
+- **Gzip Compression**: Compresses large responses (>1KB) to reduce bandwidth usage
+- **High-Performance JSON**: Uses `orjson` for fast JSON serialization
+- **Parallel Metadata Fetching**: Retrieves table metadata concurrently for fast listing
+- **Metadata Caching**: Caches object types locally to minimize KBase API calls
+- **Connection Pooling**: Reuses database connections for up to 10 minutes of inactivity
+- **Automatic Cleanup**: Expired caches are purged on startup. Uploaded databases automatically expire after **1 hour**
+- **Query Caching**: 5-minute TTL, max 1000 entries per instance
+- **Atomic Renaming**: Ensures file integrity during downloads and uploads
+- **Upload Deduplication**: SHA-256 hashing prevents duplicate file storage
 
 ## Documentation
 

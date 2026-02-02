@@ -1,23 +1,36 @@
 # TableScanner Architecture
 
 ## Overview
+
 TableScanner is a high-performance, read-only microservice designed to provide efficient access to tabular data stored in KBase (Workspace Objects or Blobstore Handles). It serves as a backend for the DataTables Viewer and other applications requiring filtered, paginated, and aggregated views of large datasets.
+
+**Production URL**: `https://appdev.kbase.us/services/berdl_table_scanner`
 
 ## System Architecture
 
 ```mermaid
 graph TD
-    Client[Client Application] --> API[FastAPI Layer]
-    API --> Service[Query Service]
-    API --> DBHelper[DB Helper]
+    Client[Client Application] -->|REST API| API[FastAPI Layer]
+    API --> Routes[Route Handlers]
+    Routes --> DBHelper[DB Helper]
+    Routes --> RequestProc[Request Processor]
     
-    subgraph Core Services
-        Service --> Pool[Connection Pool]
+    subgraph "Core Services"
+        RequestProc --> QueryService[Query Service]
+        QueryService --> Pool[Connection Pool]
         Pool --> SQLite[SQLite Cache]
-        Service --> FTS[FTS5 Search]
+        QueryService --> FTS[FTS5 Search]
+        QueryService --> Cache[Query Cache]
     end
     
-    subgraph Infrastructure
+    subgraph "Multi-Database Support"
+        DBHelper --> MultiDB[Multi-DB Resolver]
+        MultiDB --> DB1[Database 1]
+        MultiDB --> DB2[Database 2]
+        MultiDB --> DBN[Database N]
+    end
+    
+    subgraph "Infrastructure"
         DBHelper --> WS[Workspace Client]
         WS --> KBase[KBase Services]
         WS --> Blob[Blobstore]
@@ -27,51 +40,95 @@ graph TD
 ## Core Components
 
 ### 1. API Layer (`app/routes.py`)
-The entry point for all requests. It handles:
--   **Object Access**: `/object/{ws_ref}/tables`
--   **Data Queries**: `/table-data` (Advanced filtering)
+
+The entry point for all requests. Handles:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/object/{ws_ref}/tables` | List tables in single-DB object |
+| `/object/{ws_ref}/databases` | List databases in multi-DB object (v2.1) |
+| `/object/{ws_ref}/db/{db_name}/tables` | List tables in specific database (v2.1) |
+| `/object/{ws_ref}/db/{db_name}/tables/{table}/data` | Query specific database (v2.1) |
+| `/table-data` | Advanced filtering (POST) |
+| `/upload` | Local file upload |
 
 ### 2. Query Service (`app/services/data/query_service.py`)
+
 The heart of the application. It orchestrates query execution:
--   **Type-Aware Filtering**: Automatically detects column types (text vs numeric) and applies correct SQL operators.
--   **Advanced Aggregations**: Supports `GROUP BY`, `SUM`, `AVG`, `COUNT`, etc.
--   **Full-Text Search**: Leverages SQLite FTS5 for fast global searching.
--   **Result Caching**: Caches query results to minimize database I/O for repeated requests.
+
+- **Type-Aware Filtering**: Automatically detects column types (text vs numeric) and applies correct SQL operators
+- **Advanced Aggregations**: Supports `GROUP BY`, `SUM`, `AVG`, `COUNT`, etc.
+- **Full-Text Search**: Leverages SQLite FTS5 for fast global searching
+- **Result Caching**: Caches query results to minimize database I/O for repeated requests
 
 ### 3. Connection Pool (`app/services/data/connection_pool.py`)
-Manages SQLite database connections efficiently:
--   **Pooling**: Reuses connections to avoid open/close overhead.
--   **Lifecycle**: Automatically closes idle connections after a timeout.
--   **Optimization**: Configures PRAGMAs (WAL mode, memory mapping) for performance.
 
-### 4. Infrastructure Layer
--   **DB Helper (`app/services/db_helper.py`)**: Resolves "Handle Refs" or "Workspace Refs" into local file paths, handling download and caching transparently.
--   **Workspace Client (`app/utils/workspace.py`)**: Interacts with KBase services, falling back to direct HTTP queries if SDK clients are unavailable.
+Manages SQLite database connections efficiently:
+
+- **Pooling**: Reuses connections to avoid open/close overhead
+- **Lifecycle**: Automatically closes idle connections after a timeout
+- **Optimization**: Configures PRAGMAs (WAL mode, memory mapping) for performance
+
+### 4. Multi-Database Support (v2.1)
+
+Objects containing multiple pangenomes are supported via new endpoints:
+
+```
+/object/{ws_ref}/databases           → List all databases
+/object/{ws_ref}/db/{db_name}/...    → Access specific database
+```
+
+Each database within an object is stored as a separate SQLite file, enabling:
+- Independent table schemas per database
+- Parallel access to different databases
+- Clear separation of data scopes
+
+### 5. Infrastructure Layer
+
+- **DB Helper (`app/services/db_helper.py`)**: Resolves workspace refs or handles into local file paths, handling download and caching transparently
+- **Workspace Client (`app/utils/workspace.py`)**: Interacts with KBase services, supporting both single and multi-database object downloads
 
 ## Data Flow
 
-1.  **Request**: Client requests data (e.g., `GET /object/123/1/1/tables/Genes/data?limit=100`).
-2.  **Resolution**: `DB Helper` checks if the database for `123/1/1` is in the local cache.
-    -   *Miss*: Downloads file from KBase Blobstore/Workspace.
-    -   *Hit*: Returns path to local `.db` file.
-3.  **Connection**: `QueryService` requests a connection from `ConnectionPool`.
-4.  **Query Plan**:
-    -   Checks schema for column types.
-    -   Builds SQL query with parameterized filters.
-    -   Ensures necessary indexes exist.
-5.  **Execution**: SQLite executes the query (using FTS or B-Tree indexes).
-6.  **Response**: Data is returned to the client as JSON.
+### Single Database Request
+
+```
+1. Request: GET /object/76990/7/2/tables/Genes/data?limit=100
+2. Resolution: DB Helper checks cache for 76990/7/2
+   - Miss: Downloads from KBase Blobstore
+   - Hit: Returns path to local .db file
+3. Connection: QueryService gets connection from Pool
+4. Execution: SQLite query with parameterized filters
+5. Response: JSON with headers, data, metadata
+```
+
+### Multi-Database Request (v2.1)
+
+```
+1. Request: GET /object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data
+2. Resolution: DB Helper downloads ALL databases in object
+3. Selection: Multi-DB resolver selects "pg_ecoli_k12" database
+4. Connection: QueryService gets connection for specific DB file
+5. Execution: SQLite query on selected database
+6. Response: JSON with data from specific database
+```
 
 ## Design Decisions
 
--   **Read-Only**: The service never modifies the source SQLite files. This simplifies concurrency control (WAL mode).
--   **Synchronous I/O in Async App**: We use `run_sync_in_thread` to offload blocking SQLite operations to a thread pool, keeping the FastAPI event loop responsive.
--   **Local Caching**: We aggressively cache database files locally to avoid the high latency of downloading multi-GB files from KBase for every request.
--   **Metadata Caching**: Object types are cached locally to minimize redundant KBase API calls.
--   **Concurrency**: Table listing uses parallel metadata fetching (`asyncio.gather`) to resolve "N+1" query issues.
--   **Compression & High-Performance serialization**: Production-ready configuration uses Gzip and ORJSON for maximum throughput.
+| Decision | Rationale |
+|----------|-----------|
+| **Read-Only** | Simplifies concurrency control (WAL mode) |
+| **Synchronous I/O in Async App** | Uses `run_sync_in_thread` to offload blocking SQLite operations |
+| **Local Caching** | Avoids high latency of downloading multi-GB files repeatedly |
+| **SHA-256 Deduplication** | Prevents duplicate file storage for uploads |
+| **Multi-Level Caching** | Query cache (5min), DB file cache (24h), connection pool (30min) |
+| **Streaming Uploads** | 1MB chunks for large file handling without memory exhaustion |
 
 ## Security
--   **Authentication**: All data access endpoints require a valid KBase Auth Token (`Authorization` header).
--   **Authorization**: The service relies on KBase Services to validate if the token has access to the requested Workspace Object or Handle.
--   **Input Validation**: Strict validation of table and column names prevents SQL injection. Parameterized queries are used for all values.
+
+- **Authentication**: All data endpoints require valid KBase Auth Token
+- **Authorization**: Relies on KBase Services to validate access permissions
+- **SQL Injection Prevention**: Parameterized queries + table name validation via `sqlite_master`
+- **Path Traversal Prevention**: Strict ID sanitization in cache paths
+- **Upload Validation**: SQLite header verification before processing
+- **Storage Quotas**: 10GB limit with automatic cleanup
