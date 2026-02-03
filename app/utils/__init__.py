@@ -10,7 +10,6 @@ Contains business logic for:
 
 from app.utils.workspace import (
     get_berdl_table_data,
-    list_pangenomes_from_object,
 
     download_pangenome_db,
     get_object_info,
@@ -26,20 +25,15 @@ from app.utils.cache import (
     cleanup_old_caches,
 )
 from app.utils.sqlite import (
-    convert_to_sqlite,
-    query_sqlite,
-    get_table_data,
     list_tables,
     get_table_columns,
     get_table_row_count,
     validate_table_exists,
-    ensure_indices,
 )
 
 __all__ = [
     # Workspace utilities
     "get_berdl_table_data",
-    "list_pangenomes_from_object",
 
     "download_pangenome_db",
     "get_object_info",
@@ -55,12 +49,8 @@ __all__ = [
     "cleanup_old_caches",
     
     # SQLite utilities
-    "convert_to_sqlite",
-    "query_sqlite",
-    "get_table_data",
     "list_tables",
     "get_table_columns",
     "get_table_row_count",
     "validate_table_exists",
-    "ensure_indices",
 ]

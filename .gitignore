@@ -2,6 +2,11 @@ trash/
 docs/DEMO_SCRIPT.md
 docs/QUICKSTART.md
 docs/internal/
+DATABASE_SCHEMA.md
+docs/personal/
+archive/
+docs/archive
+dummy.db
 
 .DS_Store
 .idea
@@ -31,3 +36,8 @@ lib/
 
 # Cache directory
 cache/
+
+# Project-specific artifacts
+DATABASE_SCHEMA.md
+*.webp
+*.png

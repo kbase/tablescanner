@@ -1,9 +1,11 @@
+"""
+Low-level SQLite utilities.
+"""
 from __future__ import annotations
 import sqlite3
 import logging
 import time
 from pathlib import Path
-from typing import Any
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -12,37 +14,20 @@ logger = logging.getLogger(__name__)
 def _validate_table_name(cursor, table_name: str) -> None:
     """
     Validate that table_name corresponds to an existing table in the database.
-    Prevents SQL injection by ensuring table_name is a valid identifier.
     """
-    # Parameterized query is safe from injection
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
     if not cursor.fetchone():
-        # Check for case-insensitive match or just fail
         raise ValueError(f"Invalid table name: {table_name}")
 
-
-# =============================================================================
-# TABLE LISTING & METADATA
-# =============================================================================
 
 def list_tables(db_path: Path) -> list[str]:
     """
     List all user tables in a SQLite database.
-
-    Args:
-        db_path: Path to the SQLite database file
-
-    Returns:
-        List of table names (excludes sqlite_ system tables)
-
-    Raises:
-        sqlite3.Error: If database access fails
     """
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        # Query for user tables (exclude sqlite_ system tables)
         cursor.execute("""
             SELECT name FROM sqlite_master 
             WHERE type='table' 
@@ -52,373 +37,207 @@ def list_tables(db_path: Path) -> list[str]:
 
         tables = [row[0] for row in cursor.fetchall()]
         conn.close()
-
-        logger.info(f"Found {len(tables)} tables in database: {tables}")
         return tables
 
     except sqlite3.Error as e:
-        logger.error(f"Error listing tables from {db_path}: {e}")
+        logger.error("Error listing tables from %s: %s", db_path, e)
         raise
+
+
+def _quote_identifier(name: str) -> str:
+    """Quote an identifier (table or column name) for SQLite."""
+    return '"' + name.replace('"', '""') + '"'
 
 
 def get_table_columns(db_path: Path, table_name: str) -> list[str]:
     """
     Get column names for a specific table.
-
-    Args:
-        db_path: Path to the SQLite database file
-        table_name: Name of the table to query
-
-    Returns:
-        List of column names
     """
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        # Validate table name to prevent injection
-        _validate_table_name(cursor, table_name)
-
-        # Use PRAGMA to get table info
-        cursor.execute(f"PRAGMA table_info({table_name})")
+        # Validate table existence and get validated table name
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Invalid table name: {table_name}")
+        
+        validated_table_name = result[0]
+        # PRAGMA table_info accepts string literals or identifiers, but let's be consistent
+        quoted_table_name = _quote_identifier(validated_table_name)
+        cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
 
         return columns
 
     except sqlite3.Error as e:
-        logger.error(f"Error getting columns for {table_name}: {e}")
+        logger.error("Error getting columns for %s: %s", table_name, e)
         raise
 
 
 def get_table_row_count(db_path: Path, table_name: str) -> int:
     """
     Get the total row count for a table.
-
-    Args:
-        db_path: Path to the SQLite database file
-        table_name: Name of the table
-
-    Returns:
-        Number of rows in the table
     """
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        _validate_table_name(cursor, table_name)
-
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        # Validate table existence and get validated table name
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Invalid table name: {table_name}")
+        
+        validated_table_name = result[0]
+        quoted_table_name = _quote_identifier(validated_table_name)
+        cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
         count = cursor.fetchone()[0]
         conn.close()
 
         return count
 
     except sqlite3.Error as e:
-        logger.error(f"Error counting rows in {table_name}: {e}")
+        logger.error("Error counting rows in %s: %s", table_name, e)
         raise
 
 
 def validate_table_exists(db_path: Path, table_name: str) -> bool:
     """
     Check if a table exists in the database.
-
-    Args:
-        db_path: Path to the SQLite database file
-        table_name: Name of the table to check
-
-    Returns:
-        True if table exists, False otherwise
     """
-    tables = list_tables(db_path)
-    return table_name in tables
+    try:
+        tables = list_tables(db_path)
+        return table_name in tables
+    except (sqlite3.Error, OSError, ValueError) as e:
+        # Any database-related error means we can't validate the table
+        logger.debug("Failed to validate table %s: %s", table_name, e)
+        return False
 
 
-# =============================================================================
-# INDEX OPTIMIZATION
-# =============================================================================
-
-def ensure_indices(db_path: Path, table_name: str) -> None:
+def get_table_statistics(db_path: Path, table_name: str) -> dict:
     """
-    Ensure indices exist for all columns in the table to optimize filtering.
-
-    This is an optimization step - failures are logged but not raised.
-
-    Args:
-        db_path: Path to the SQLite database file
-        table_name: Name of the table
+    Calculate statistics for all columns in a table.
     """
     try:
         conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-
-        _validate_table_name(cursor, table_name)
-
-        # Get columns
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        # Create index for each column
-        for col in columns:
-            index_name = f"idx_{table_name}_{col}"
-            # Sanitize column name for SQL safety
-            safe_col = col.replace('"', '""')
-            cursor.execute(
-                f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table_name}" ("{safe_col}")'
-            )
-
-        conn.commit()
-        conn.close()
-        logger.info(f"Ensured indices for table {table_name}")
-
-    except sqlite3.Error as e:
-        # Don't raise, just log warning as this is an optimization step
-        logger.warning(f"Error creating indices for {table_name}: {e}")
-
-
-# =============================================================================
-# DATA RETRIEVAL - SIMPLE QUERY
-# =============================================================================
-
-def query_sqlite(sqlite_file: Path, query_id: str) -> dict[str, Any]:
-    """
-    Query SQLite database by ID. Legacy compatibility function.
-
-    Args:
-        sqlite_file: Path to SQLite database
-        query_id: Query identifier
-
-    Returns:
-        Query results as dictionary
-    """
-    return {
-        "stub": "SQLite query results would go here",
-        "query_id": query_id,
-        "sqlite_file": str(sqlite_file)
-    }
-
-
-# =============================================================================
-# DATA RETRIEVAL - FULL FEATURED
-# =============================================================================
-
-def get_table_data(
-    sqlite_file: Path,
-    table_name: str,
-    limit: int = 100,
-    offset: int = 0,
-    sort_column: str | None = None,
-    sort_order: str = "ASC",
-    search_value: str | None = None,
-    query_filters: dict[str, str] | None = None,
-    columns: str | None = "all",
-    order_by: list[dict[str, str]] | None = None
-) -> tuple[list[str], list[Any], int, int, float, float]:
-    """
-    Get paginated and filtered data from a table.
-    
-    Supports two filtering APIs for flexibility:
-    1. `filters`: List of FilterSpec-style dicts with column, op, value
-    2. `query_filters`: Simple dict of column -> search_value (LIKE matching)
-
-    Args:
-        sqlite_file: Path to SQLite database
-        table_name: Name of the table to query
-        limit: Maximum number of rows to return
-        offset: Number of rows to skip
-        sort_column: Single column to sort by (alternative to order_by)
-        sort_order: Sort direction 'asc' or 'desc' (with sort_column)
-        search_value: Global search term for all columns
-        query_filters: Dict of column-specific search terms
-        columns: Comma-separated list of columns to select
-        order_by: List of order specifications [{column, direction}]
-
-    Returns:
-        Tuple of (headers, data, total_count, filtered_count, db_query_ms, conversion_ms)
-
-    Raises:
-        sqlite3.Error: If database query fails
-        ValueError: If invalid operator is specified
-    """
-    start_time = time.time()
-    
-    # Initialize legacy filters to None since removed from signature
-    filters = None
-    
-    try:
-        conn = sqlite3.connect(str(sqlite_file))
+        # Use row factory to access columns by name if needed, though we use indices here
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Validate table name
-        _validate_table_name(cursor, table_name)
+        # Validate table
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        if not cursor.fetchone():
+            raise ValueError(f"Invalid table name: {table_name}")
 
-        # Get all column names first for validation
-        all_headers = get_table_columns(sqlite_file, table_name)
+        validated_table = table_name
 
-        if not all_headers:
-            logger.warning(f"Table {table_name} has no columns or doesn't exist")
-            return [], [], 0, 0, 0.0, 0.0
+        # Get total row count
+        quoted_table_name = _quote_identifier(validated_table)
+        cursor.execute("SELECT COUNT(*) FROM " + quoted_table_name)
+        row_count = cursor.fetchone()[0]
 
-        # Parse requested columns
-        selected_headers = all_headers
-        select_clause = "*"
+        # Get columns and types
+        cursor.execute("PRAGMA table_info(" + quoted_table_name + ")")
+        columns_info = cursor.fetchall()
         
-        if columns and columns.lower() != "all":
-            requested = [c.strip() for c in columns.split(',') if c.strip()]
-            valid = [c for c in requested if c in all_headers]
-            if valid:
-                selected_headers = valid
-                safe_cols = [f'"{c}"' for c in selected_headers]
-                select_clause = ", ".join(safe_cols)
-        
-        headers = selected_headers
+        stats_columns = []
 
-        # 1. Get total count (before filtering)
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        total_count = cursor.fetchone()[0]
+        for col in columns_info:
+            col_name = col['name']
+            col_type = col['type']
+            
+            # Use proper identifier quoting
+            quoted_col_name = _quote_identifier(col_name)
+            
+            # Base stats query
+            # We use SUM(CASE WHEN ... IS NULL) instead of COUNT(col) logic sometimes to be explicit
+            # but COUNT(col) counts non-nulls. So Nulls = Total - COUNT(col).
+            cursor.execute("""
+                SELECT 
+                    COUNT(""" + quoted_col_name + """) as non_null_count,
+                    COUNT(DISTINCT """ + quoted_col_name + """) as distinct_count
+                FROM """ + quoted_table_name)
+            basic_stats = cursor.fetchone()
+            non_null_count = basic_stats['non_null_count']
+            null_count = row_count - non_null_count
+            distinct_count = basic_stats['distinct_count']
 
-        # 2. Build WHERE clause
-        conditions = []
-        params = []
+            col_stats = {
+                "column": col_name,
+                "type": col_type,
+                "non_null_count": non_null_count,
+                "null_count": null_count,
+                "distinct_count": distinct_count,
+                "sample_values": []
+            }
 
-        # 2a. Global Search (OR logic across all columns)
-        if search_value:
-            search_conditions = []
-            term = f"%{search_value}%"
-            for col in headers:
-                search_conditions.append(f'"{col}" LIKE ?')
-                params.append(term)
+            # Extended stats for numeric types
+            # Heuristic: simplistic check for INT, REAL, FLO, DOUB, NUM
+            is_numeric = any(t in col_type.upper() for t in ['INT', 'REAL', 'FLO', 'DOUB', 'NUM', 'DEC'])
+            
+            if is_numeric and non_null_count > 0:
+                try:
+                    cursor.execute("""
+                        SELECT 
+                            MIN(""" + quoted_col_name + """), 
+                            MAX(""" + quoted_col_name + """), 
+                            AVG(""" + quoted_col_name + """)
+                        FROM """ + quoted_table_name + """
+                        WHERE """ + quoted_col_name + """ IS NOT NULL
+                    """)
+                    num_stats = cursor.fetchone()
+                    if num_stats[0] is not None:
+                        col_stats["min"] = num_stats[0]
+                        col_stats["max"] = num_stats[1]
+                        col_stats["mean"] = num_stats[2]
+                except (sqlite3.Error, ValueError, TypeError) as e:
+                    # Ignore errors in numeric aggregate (e.g. if column declared int but has strings)
+                    logger.debug("Numeric stats failed for column %s: %s", col_name, e)
+            elif non_null_count > 0:
+                # For non-numeric, just get Min/Max
+                try:
+                    cursor.execute("""
+                        SELECT MIN(""" + quoted_col_name + """), MAX(""" + quoted_col_name + """)
+                        FROM """ + quoted_table_name + """
+                        WHERE """ + quoted_col_name + """ IS NOT NULL
+                    """)
+                    str_stats = cursor.fetchone()
+                    if str_stats[0] is not None:
+                        col_stats["min"] = str_stats[0]
+                        col_stats["max"] = str_stats[1]
+                except (sqlite3.Error, ValueError, TypeError) as e:
+                    # Ignore errors in string aggregate
+                    logger.debug("String stats failed for column %s: %s", col_name, e)
 
-            if search_conditions:
-                conditions.append(f"({' OR '.join(search_conditions)})")
+            # Get sample values (first 5 non-null distinct preferred, or just first 5)
+            try:
+                cursor.execute("""
+                    SELECT DISTINCT """ + quoted_col_name + """
+                    FROM """ + quoted_table_name + """
+                    WHERE """ + quoted_col_name + """ IS NOT NULL
+                    LIMIT 5
+                """)
+                samples = [row[0] for row in cursor.fetchall()]
+                col_stats["sample_values"] = samples
+            except (sqlite3.Error, ValueError, TypeError) as e:
+                # Failed to get sample values
+                logger.debug("Sample values failed for column %s: %s", col_name, e)
+                col_stats["sample_values"] = []
 
-        # 2b. Column Filters via query_filters dict (AND logic)
-        if query_filters:
-            for col, val in query_filters.items():
-                if col in headers and val:
-                    conditions.append(f'"{col}" LIKE ?')
-                    params.append(f"%{val}%")
-
-        # 2c. Structured filters via filters list (AND logic)
-        if filters:
-            allowed_ops = ["=", "!=", "<", ">", "<=", ">=", "LIKE", "IN"]
-            for filter_spec in filters:
-                column = filter_spec.get("column")
-                op = filter_spec.get("op", "LIKE")
-                value = filter_spec.get("value")
-
-                if not column or column not in headers:
-                    continue
-
-                if op not in allowed_ops:
-                    raise ValueError(f"Invalid operator: {op}")
-
-                conditions.append(f'"{column}" {op} ?')
-                params.append(value)
-
-        where_clause = ""
-        if conditions:
-            where_clause = " WHERE " + " AND ".join(conditions)
-
-        # 3. Get filtered count
-        if where_clause:
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name} {where_clause}", params)
-            filtered_count = cursor.fetchone()[0]
-        else:
-            filtered_count = total_count
-
-        # 4. Build final query
-        query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
-
-        # Add ORDER BY clause
-        order_clauses = []
-
-        # Handle order_by list
-        if order_by:
-            for order_spec in order_by:
-                col = order_spec.get("column")
-                direction = order_spec.get("direction", "ASC").upper()
-
-                if col and col in headers:
-                    if direction not in ["ASC", "DESC"]:
-                        direction = "ASC"
-                    order_clauses.append(f'"{col}" {direction}')
-
-        # Handle single sort_column (alternative API)
-        if sort_column and sort_column in headers:
-            direction = "DESC" if sort_order and sort_order.lower() == "desc" else "ASC"
-            order_clauses.append(f'"{sort_column}" {direction}')
-
-        if order_clauses:
-            query += " ORDER BY " + ", ".join(order_clauses)
-        elif headers:
-            # Default sort for consistent pagination
-            query += f' ORDER BY "{headers[0]}" ASC'
-
-        # Add LIMIT clause
-        if limit is not None:
-            query += f" LIMIT {int(limit)}"
-
-        # Add OFFSET clause
-        if offset is not None:
-            query += f" OFFSET {int(offset)}"
-
-        # Execute query with timing
-        query_start = time.time()
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        db_query_ms = (time.time() - query_start) * 1000
+            stats_columns.append(col_stats)
 
         conn.close()
-
-        # Convert rows to string arrays with timing
-        conversion_start = time.time()
-        data = []
-        for row in rows:
-            string_row = [
-                str(value) if value is not None else ""
-                for value in row
-            ]
-            data.append(string_row)
-        conversion_ms = (time.time() - conversion_start) * 1000
-
-        return headers, data, total_count, filtered_count, db_query_ms, conversion_ms
+        
+        return {
+            "table": table_name,
+            "row_count": row_count,
+            "columns": stats_columns,
+            "last_updated": int(time.time() * 1000)
+        }
 
     except sqlite3.Error as e:
-        logger.error(f"Error extracting data from {table_name}: {e}")
+        logger.error("Error calculating stats for %s: %s", table_name, e)
         raise
-
-
-# =============================================================================
-# CONVERSION (PLACEHOLDER)
-# =============================================================================
-
-def convert_to_sqlite(binary_file: Path, sqlite_file: Path) -> None:
-    """
-    Convert binary file to SQLite database.
-
-    This function handles conversion of various binary formats
-    to SQLite for efficient querying.
-
-    Args:
-        binary_file: Path to binary file
-        sqlite_file: Path to output SQLite file
-
-    Raises:
-        NotImplementedError: Conversion logic depends on binary format
-    """
-    # Check if file is already a SQLite database
-    if binary_file.suffix == '.db':
-        # Just copy/link the file
-        import shutil
-        shutil.copy2(binary_file, sqlite_file)
-        logger.info(f"Copied SQLite database to {sqlite_file}")
-        return
-
-    # TODO: Implement conversion logic based on binary file format
-    # The BERDLTables object stores SQLite directly, so this may not be needed
-    raise NotImplementedError(
-        f"SQLite conversion not implemented for format: {binary_file.suffix}"
-    )
-

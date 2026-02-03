@@ -1,85 +1,134 @@
 # TableScanner Architecture
 
-TableScanner is a high-performance middleware service designed to provide fast, filtered, and paginated access to large tabular data stored in KBase. It solves the performance bottleneck of loading massive objects into memory by leveraging local SQLite caching and efficient indexing.
+## Overview
 
----
+TableScanner is a high-performance, read-only microservice designed to provide efficient access to tabular data stored in KBase (Workspace Objects or Blobstore Handles). It serves as a backend for the DataTables Viewer and other applications requiring filtered, paginated, and aggregated views of large datasets.
 
-## High-Level Architecture
+**Production URL**: `https://appdev.kbase.us/services/berdl_table_scanner`
+
+## System Architecture
 
 ```mermaid
 graph TD
-    User([User / API Client])
-    TS[TableScanner Service]
-    KBaseWS[KBase Workspace]
-    KBaseBlob[KBase Blobstore]
-    LocalCache[(Local SQLite Cache)]
-
-    User -->|API Requests| TS
-    TS -->|1. Resolve Metadata| KBaseWS
-    TS -->|2. Download Blob| KBaseBlob
-    TS -->|3. Store & Index| LocalCache
-    TS -->|4. SQL Query| LocalCache
-    LocalCache -->|5. Result| TS
-    TS -->|6. JSON Response| User
+    Client[Client Application] -->|REST API| API[FastAPI Layer]
+    API --> Routes[Route Handlers]
+    Routes --> DBHelper[DB Helper]
+    Routes --> RequestProc[Request Processor]
+    
+    subgraph "Core Services"
+        RequestProc --> QueryService[Query Service]
+        QueryService --> Pool[Connection Pool]
+        Pool --> SQLite[SQLite Cache]
+        QueryService --> FTS[FTS5 Search]
+        QueryService --> Cache[Query Cache]
+    end
+    
+    subgraph "Multi-Database Support"
+        DBHelper --> MultiDB[Multi-DB Resolver]
+        MultiDB --> DB1[Database 1]
+        MultiDB --> DB2[Database 2]
+        MultiDB --> DBN[Database N]
+    end
+    
+    subgraph "Infrastructure"
+        DBHelper --> WS[Workspace Client]
+        WS --> KBase[KBase Services]
+        WS --> Blob[Blobstore]
+    end
 ```
 
----
+## Core Components
 
-## Caching Strategy: One DB per UPA
+### 1. API Layer (`app/routes.py`)
 
-TableScanner employs a strict **one-database-per-object** caching policy. Each KBase object reference (UPA, e.g., `76990/7/2`) is mapped to a unique local directory.
+The entry point for all requests. Handles:
 
--   **Path Structure**: `{CACHE_DIR}/{sanitized_UPA}/tables.db`
--   **Sanitization**: Special characters like `/`, `:`, and spaces are replaced with underscores to ensure filesystem compatibility.
--   **Granularity**: Caching is performed at the object level. If multiple tables exist within a single SQLite blob, they are all cached together, improving subsequent access to related data.
+| Endpoint | Purpose |
+|----------|---------|
+| `/object/{ws_ref}/tables` | List tables in single-DB object |
+| `/object/{ws_ref}/databases` | List databases in multi-DB object (v2.1) |
+| `/object/{ws_ref}/db/{db_name}/tables` | List tables in specific database (v2.1) |
+| `/object/{ws_ref}/db/{db_name}/tables/{table}/data` | Query specific database (v2.1) |
+| `/table-data` | Advanced filtering (POST) |
+| `/upload` | Local file upload |
 
----
+### 2. Query Service (`app/services/data/query_service.py`)
 
-## Race Condition and Atomic Handling
+The heart of the application. It orchestrates query execution:
 
-To ensure reliability in high-concurrency environments (multiple users requesting the same data simultaneously), TableScanner implements **Atomic File Operations**:
+- **Type-Aware Filtering**: Automatically detects column types (text vs numeric) and applies correct SQL operators
+- **Advanced Aggregations**: Supports `GROUP BY`, `SUM`, `AVG`, `COUNT`, etc.
+- **Full-Text Search**: Leverages SQLite FTS5 for fast global searching
+- **Result Caching**: Caches query results to minimize database I/O for repeated requests
 
-### 1. Atomic Downloads
-When a database needs to be downloaded, TableScanner does **not** download directly to the final path.
-1.  A unique temporary filename is generated using a UUID: `tables.db.{uuid}.tmp`.
-2.  The file is downloaded from the KBase Blobstore into this temporary file.
-3.  Once the download is successful and verified, a **filesystem-level atomic rename** (`os.rename`) is performed to move it to `tables.db`.
-4.  This ensures that if a process crashes or a network error occurs, the cache directory will not contain a partially-downloaded, corrupt database.
+### 3. Connection Pool (`app/services/data/connection_pool.py`)
 
-### 2. Concurrent Request Handling
-If two requests for the same UPA arrive at the same time:
--   Both will check for the existence of `tables.db`.
--   If it's missing, both may start a download to their own unique `temp` files.
--   The first one to finish will atomically rename its temp file to `tables.db`.
--   The second one to finish will also rename its file, overwriting the first. Since the content is identical (same UPA), the final state remains consistent and the database is never in a corrupt state during the swap.
+Manages SQLite database connections efficiently:
 
----
+- **Pooling**: Reuses connections to avoid open/close overhead
+- **Lifecycle**: Automatically closes idle connections after a timeout
+- **Optimization**: Configures PRAGMAs (WAL mode, memory mapping) for performance
 
-## Performance Optimization: Automatic Indexing
+### 4. Multi-Database Support (v2.1)
 
-TableScanner doesn't just store the data; it optimizes it. Upon the **first access** to any table:
--   The service scans the table schema.
--   It automatically generates a `idx_{table}_{column}` index for **every single column** in the table.
--   This "Indexing on Demand" strategy ensures that even complex global searches or specific column filters remain sub-millisecond, regardless of the table size.
+Objects containing multiple pangenomes are supported via new endpoints:
 
----
+```
+/object/{ws_ref}/databases           → List all databases
+/object/{ws_ref}/db/{db_name}/...    → Access specific database
+```
 
-## Data Lifecycle in Detail
+Each database within an object is stored as a separate SQLite file, enabling:
+- Independent table schemas per database
+- Parallel access to different databases
+- Clear separation of data scopes
 
-1.  **Request**: User provides a KBase UPA and query parameters.
-2.  **Cache Verification**: Service checks if `{sanitized_UPA}/tables.db` exists and is valid.
-3.  **Metadata Resolution**: If not cached, `KBUtilLib` fetches the object from KBase to extract the Blobstore handle.
-4.  **Secure Download**: The blob is streamed to a temporary UUID file and then atomically renamed.
-5.  **Schema Check**: TableScanner verifies the requested table exists in the SQLite file.
-6.  **Index Check**: If it's the first time this table is being queried, indices are created for all columns.
-7.  **SQL Execution**: A standard SQL query with `LIMIT`, `OFFSET`, and `LIKE` filters is executed.
-8.  **Streaming Serialization**: Results are converted into a compact JSON list-of-lists and returned to the user.
+### 5. Infrastructure Layer
 
----
+- **DB Helper (`app/services/db_helper.py`)**: Resolves workspace refs or handles into local file paths, handling download and caching transparently
+- **Workspace Client (`app/utils/workspace.py`)**: Interacts with KBase services, supporting both single and multi-database object downloads
 
-## Tech Stack and Key Components
+## Data Flow
 
--   **FastAPI**: Provides the high-performance async web layer.
--   **SQLite**: The storage engine for tabular data, chosen for its zero-configuration and high performance with indices.
--   **KBUtilLib**: Handles complex KBase Workspace and Blobstore interactions.
--   **UUID-based Temp Storage**: Prevents race conditions during file I/O.
+### Single Database Request
+
+```
+1. Request: GET /object/76990/7/2/tables/Genes/data?limit=100
+2. Resolution: DB Helper checks cache for 76990/7/2
+   - Miss: Downloads from KBase Blobstore
+   - Hit: Returns path to local .db file
+3. Connection: QueryService gets connection from Pool
+4. Execution: SQLite query with parameterized filters
+5. Response: JSON with headers, data, metadata
+```
+
+### Multi-Database Request (v2.1)
+
+```
+1. Request: GET /object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data
+2. Resolution: DB Helper downloads ALL databases in object
+3. Selection: Multi-DB resolver selects "pg_ecoli_k12" database
+4. Connection: QueryService gets connection for specific DB file
+5. Execution: SQLite query on selected database
+6. Response: JSON with data from specific database
+```
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Read-Only** | Simplifies concurrency control (WAL mode) |
+| **Synchronous I/O in Async App** | Uses `run_sync_in_thread` to offload blocking SQLite operations |
+| **Local Caching** | Avoids high latency of downloading multi-GB files repeatedly |
+| **SHA-256 Deduplication** | Prevents duplicate file storage for uploads |
+| **Multi-Level Caching** | Query cache (5min), DB file cache (24h), connection pool (30min) |
+| **Streaming Uploads** | 1MB chunks for large file handling without memory exhaustion |
+
+## Security
+
+- **Authentication**: All data endpoints require valid KBase Auth Token
+- **Authorization**: Relies on KBase Services to validate access permissions
+- **SQL Injection Prevention**: Parameterized queries + table name validation via `sqlite_master`
+- **Path Traversal Prevention**: Strict ID sanitization in cache paths
+- **Upload Validation**: SQLite header verification before processing
+- **Storage Quotas**: 10GB limit with automatic cleanup

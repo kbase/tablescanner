@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from app.config_constants import MAX_LIMIT
+
 
 # =============================================================================
 # REQUEST MODELS
@@ -20,10 +22,10 @@ class TableDataRequest(BaseModel):
         description="BERDLTables object reference",
         examples=["76990/ADPITest"]
     )
-    columns: str | None = Field(
+    columns: str | list[str] | None = Field(
         "all",
-        description="Comma-separated list of columns to select or 'all'",
-        examples=["gene_id, gene_name"]
+        description="Comma-separated list of columns to select or 'all', or list of strings",
+        examples=["gene_id, gene_name", ["gene_id", "gene_name"]]
     )
     col_filter: dict[str, str] | None = Field(
         None,
@@ -38,7 +40,7 @@ class TableDataRequest(BaseModel):
     limit: int = Field(
         100,
         ge=1,
-        le=500000,
+        le=MAX_LIMIT,
         description="Maximum rows to return"
     )
     offset: int = Field(
@@ -73,6 +75,20 @@ class TableDataRequest(BaseModel):
         description="KBase environment"
     )
 
+    # Advanced Features (System Overhaul)
+    filters: list[FilterRequest] | None = Field(
+        None, 
+        description="Advanced filter specifications"
+    )
+    aggregations: list[AggregationRequest] | None = Field(
+        None, 
+        description="Aggregation specifications"
+    )
+    group_by: list[str] | None = Field(
+        None, 
+        description="Columns for GROUP BY clause"
+    )
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -105,10 +121,20 @@ class TableInfo(BaseModel):
     column_count: int | None = Field(None, description="Number of columns", examples=[18])
 
 
+class DatabaseInfo(BaseModel):
+    """Information about a single database within a workspace object."""
+    db_name: str = Field(..., description="Database identifier (e.g., pangenome_id or filename)", examples=["pg_ecoli_k12"])
+    db_display_name: str | None = Field(None, description="Human-readable name", examples=["E. coli K-12"])
+    tables: list[TableInfo] = Field(default_factory=list, description="Tables within this database")
+    row_count: int | None = Field(None, description="Total rows across all tables")
+    schemas: dict | None = Field(None, description="Column types per table: {table_name: {column: sql_type}}")
+
+
 class TableListResponse(BaseModel):
     """Response for listing tables in a database."""
     berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
     handle_ref: str | None = Field(None, description="Blobstore handle reference", examples=["KBH_248028"])
+    object_type: str | None = Field(None, description="KBase object type", examples=["KBaseGeneDataLakes.BERDLTables-1.0"])
     tables: list[TableInfo] = Field(
         default_factory=list,
         description="List of available tables",
@@ -118,50 +144,71 @@ class TableListResponse(BaseModel):
         ]]
     )
     source: str | None = Field(None, description="Data source", examples=["Cache"])
-
-
-class PangenomeInfo(BaseModel):
-    """Information about a pangenome found in the SQLite file."""
-    pangenome_taxonomy: str | None = Field(None, description="Taxonomy of the pangenome", examples=["Escherichia coli"])
-    genome_count: int = Field(..., description="Number of genomes in the pangenome", examples=[42])
-    source_berdl_id: str = Field(..., description="Source BERDL Table ID", examples=["76990/7/2"])
-    user_genomes: list[str] = Field(
-        default_factory=list,
-        description="List of user-provided genome references",
-        examples=[["76990/1/1", "76990/2/1"]]
+    
+    # Viewer integration fields
+    config_fingerprint: str | None = Field(
+        None, 
+        description="Fingerprint of cached viewer config (if exists)",
+        examples=["v1_auto_abc123def456"]
     )
-    berdl_genomes: list[str] = Field(
-        default_factory=list,
-        description="List of BERDL/Datalake genome identifiers",
-        examples=[["GLM4:EC_G1", "GLM4:EC_G2"]]
-    )
-    handle_ref: str | None = Field(
+    config_url: str | None = Field(
         None,
-        description="Blobstore handle reference for SQLite database",
-        examples=["KBH_248028"]
+        description="URL to retrieve generated viewer config",
+        examples=["/config/generated/v1_auto_abc123def456"]
     )
-
-
-class PangenomesResponse(BaseModel):
-    """Response for listing pangenomes from a BERDLTables object."""
-    berdl_table_id: str | None = Field(None, description="BERDLTable object reference", examples=["76990/7/2"])
-    pangenomes: list[PangenomeInfo] = Field(
-        default_factory=list,
-        description="List of available pangenomes",
+    has_cached_config: bool = Field(
+        False,
+        description="Whether a viewer config is cached for this database"
+    )
+    
+    # Schema information for immediate viewer use
+    schemas: dict | None = Field(
+        None,
+        description="Column types per table: {table_name: {column: sql_type}}"
+    )
+    
+    # Fallback config availability
+    has_builtin_config: bool = Field(
+        False,
+        description="Whether a built-in fallback config exists for this object type"
+    )
+    builtin_config_id: str | None = Field(
+        None,
+        description="ID of the matching built-in config"
+    )
+    
+    # Database metadata
+    database_size_bytes: int | None = Field(
+        None,
+        description="Size of the SQLite database file in bytes"
+    )
+    total_rows: int = Field(
+        0,
+        description="Total rows across all tables"
+    )
+    
+    # Versioning for backward compatibility
+    api_version: str = Field(
+        "2.0",
+        description="API version for response format compatibility"
+    )
+    
+    # Multi-database support
+    databases: list[DatabaseInfo] | None = Field(
+        None,
+        description="List of databases in this object (for multi-DB objects)",
         examples=[[
-            {
-                "pangenome_taxonomy": "Escherichia coli",
-                "genome_count": 42,
-                "source_berdl_id": "76990/7/2",
-                "handle_ref": "KBH_248028"
-            }
+            {"db_name": "pg_ecoli_k12", "db_display_name": "E. coli K-12", "tables": []},
+            {"db_name": "pg_ecoli_o157", "db_display_name": "E. coli O157:H7", "tables": []}
         ]]
     )
-    pangenome_count: int = Field(
-        1,
-        description="Total number of pangenomes",
-        examples=[1]
+    has_multiple_databases: bool = Field(
+        False,
+        description="Whether this object contains multiple databases"
     )
+
+
+
 
 
 class TableDataResponse(BaseModel):
@@ -217,6 +264,45 @@ class TableDataResponse(BaseModel):
     sqlite_file: str | None = Field(
         None,
         description="Path to SQLite database"
+    )
+    object_type: str | None = Field(
+        None,
+        description="KBase object type",
+        examples=["KBaseGeneDataLakes.BERDLTables-1.0"]
+    )
+    
+    # Enhanced Metadata (System Overhaul)
+    column_types: list[ColumnTypeInfo] | None = Field(
+        None, 
+        description="Column type information"
+    )
+    column_schema: list[ColumnTypeInfo] | None = Field(
+        None,
+        description="Alias for column_types (for compatibility)"
+    )
+    query_metadata: QueryMetadata | None = Field(
+        None, 
+        description="Query execution metadata"
+    )
+    cached: bool = Field(
+        False, 
+        description="Whether result was from cache"
+    )
+    execution_time_ms: float | None = Field(
+        None, 
+        description="Query execution time in milliseconds (alias for response_time_ms)"
+    )
+    limit: int | None = Field(
+        None, 
+        description="Limit applied"
+    )
+    offset: int | None = Field(
+        None, 
+        description="Offset applied"
+    )
+    database_path: str | None = Field(
+        None, 
+        description="Path to database file"
     )
 
     model_config = {
@@ -297,3 +383,139 @@ class ServiceStatus(BaseModel):
         description="Service status"
     )
     cache_dir: str = Field(..., description="Cache directory path")
+
+
+
+
+# =============================================================================
+# DATATABLES VIEWER API MODELS
+# =============================================================================
+
+
+class FilterRequest(BaseModel):
+    """Filter specification for DataTables Viewer API."""
+    column: str = Field(..., description="Column name to filter")
+    operator: str = Field(
+        ...,
+        description="Filter operator: eq, ne, gt, gte, lt, lte, like, ilike, in, not_in, between, is_null, is_not_null"
+    )
+    value: Any = Field(None, description="Filter value (or first value for 'between')")
+    value2: Any = Field(None, description="Second value for 'between' operator")
+
+
+class AggregationRequest(BaseModel):
+    """Aggregation specification for DataTables Viewer API."""
+    column: str = Field(..., description="Column name to aggregate")
+    function: str = Field(
+        ...,
+        description="Aggregation function: count, sum, avg, min, max, stddev, variance, distinct_count"
+    )
+    alias: str | None = Field(None, description="Alias for aggregated column")
+
+
+class TableDataQueryRequest(BaseModel):
+    """Enhanced table data query request for DataTables Viewer API."""
+    berdl_table_id: str = Field(..., description="Database identifier (local/db_name format)")
+    table_name: str = Field(..., description="Table name")
+    limit: int = Field(100, ge=1, le=MAX_LIMIT, description="Maximum rows to return")
+    offset: int = Field(0, ge=0, description="Number of rows to skip")
+    columns: list[str] | None = Field(None, description="List of columns to select (None = all)")
+    sort_column: str | None = Field(None, description="Column to sort by")
+    sort_order: Literal["ASC", "DESC"] = Field("ASC", description="Sort direction")
+    search_value: str | None = Field(None, description="Global search term")
+    col_filter: dict[str, str] | None = Field(None, description="Simple column filters (legacy)")
+    filters: list[FilterRequest] | None = Field(None, description="Advanced filter specifications")
+    aggregations: list[AggregationRequest] | None = Field(None, description="Aggregation specifications")
+    group_by: list[str] | None = Field(None, description="Columns for GROUP BY clause")
+
+
+class AggregationQueryRequest(BaseModel):
+    """Aggregation query request."""
+    group_by: list[str] = Field(..., description="Columns for GROUP BY")
+    aggregations: list[AggregationRequest] = Field(..., description="Aggregation specifications")
+    filters: list[FilterRequest] | None = Field(None, description="Filter specifications")
+    limit: int = Field(100, ge=1, le=MAX_LIMIT, description="Maximum rows to return")
+    offset: int = Field(0, ge=0, description="Number of rows to skip")
+
+
+class ColumnTypeInfo(BaseModel):
+    """Column type information."""
+    name: str = Field(..., description="Column name")
+    type: str = Field(..., description="SQLite type (INTEGER, REAL, TEXT, etc.)")
+    notnull: bool = Field(False, description="Whether column is NOT NULL")
+    pk: bool = Field(False, description="Whether column is PRIMARY KEY")
+    dflt_value: Any = Field(None, description="Default value")
+
+
+class QueryMetadata(BaseModel):
+    """Query execution metadata."""
+    query_type: str = Field(..., description="Type of query: select, aggregate")
+    sql: str = Field(..., description="Executed SQL query")
+    filters_applied: int = Field(0, description="Number of filters applied")
+    has_search: bool = Field(False, description="Whether search was applied")
+    has_sort: bool = Field(False, description="Whether sorting was applied")
+    has_group_by: bool = Field(False, description="Whether GROUP BY was applied")
+    has_aggregations: bool = Field(False, description="Whether aggregations were applied")
+
+
+class TableDataQueryResponse(BaseModel):
+    """Enhanced table data query response for DataTables Viewer API."""
+    headers: list[str] = Field(..., description="Column names")
+    data: list[list[str]] = Field(..., description="Row data as list of lists")
+    total_count: int = Field(..., description="Total rows in table (before filtering)")
+    column_types: list[ColumnTypeInfo] = Field(..., description="Column type information")
+    query_metadata: QueryMetadata = Field(..., description="Query execution metadata")
+    cached: bool = Field(False, description="Whether result was from cache")
+    execution_time_ms: float = Field(..., description="Query execution time in milliseconds")
+    limit: int = Field(..., description="Limit applied")
+    offset: int = Field(..., description="Offset applied")
+    table_name: str = Field(..., description="Table name")
+    database_path: str = Field(..., description="Path to database file")
+
+
+class TableSchemaInfo(BaseModel):
+    """Table schema information."""
+    table: str = Field(..., description="Table name")
+    columns: list[ColumnTypeInfo] = Field(..., description="Column information")
+    indexes: list[dict[str, str]] = Field(default_factory=list, description="Index information")
+
+
+class ColumnStatistic(BaseModel):
+    """Column statistics."""
+    column: str = Field(..., description="Column name")
+    type: str = Field(..., description="Column type")
+    non_null_count: int = Field(0, description="Number of non-NULL values")
+    null_count: int = Field(0, description="Number of NULL values")
+    distinct_count: int = Field(0, description="Number of distinct values")
+    min: Any = Field(None, description="Minimum value")
+    max: Any = Field(None, description="Maximum value")
+    mean: float | None = Field(None, description="Mean value")
+    median: float | None = Field(None, description="Median value")
+    stddev: float | None = Field(None, description="Standard deviation")
+    sample_values: list[Any] = Field(default_factory=list, description="Sample values")
+
+
+class TableStatisticsResponse(BaseModel):
+    """Table statistics response."""
+    table: str = Field(..., description="Table name")
+    row_count: int = Field(..., description="Total row count")
+    columns: list[ColumnStatistic] = Field(..., description="Column statistics")
+    last_updated: int = Field(..., description="Last update timestamp (milliseconds since epoch)")
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str = Field("ok", description="Service status")
+    timestamp: str = Field(..., description="ISO8601 timestamp")
+    mode: str = Field("cached_sqlite", description="Service mode")
+    data_dir: str = Field(..., description="Data directory path")
+    config_dir: str = Field(..., description="Config directory path")
+    cache: dict[str, Any] = Field(..., description="Cache information")
+
+
+class UploadDBResponse(BaseModel):
+    """Response for database upload."""
+    handle: str = Field(..., description="Handle for the uploaded database (e.g., local:uuid)")
+    filename: str = Field(..., description="Original filename")
+    size_bytes: int = Field(..., description="Size of the uploaded file in bytes")
+    message: str = Field(..., description="Status message")

@@ -12,6 +12,19 @@ LIB_PATH = Path(__file__).parent.parent.parent / "lib" / "KBUtilLib" / "src"
 if str(LIB_PATH) not in sys.path:
     sys.path.insert(0, str(LIB_PATH))
 
+# Try conditional imports at top level
+try:
+    from kbutillib.kb_ws_utils import KBWSUtils
+    from kbutillib.notebook_utils import NotebookUtils
+    HAS_KBUTILLIB = True
+except ImportError:
+    HAS_KBUTILLIB = False
+    # Define dummy classes if needed for type hinting or logic check
+    KBWSUtils = object
+    NotebookUtils = object
+
+from app.config import settings
+
 # Configure module logger
 logger = logging.getLogger(__name__)
 
@@ -54,8 +67,8 @@ class KBaseClient:
     def _init_client(self):
         """Initialize the appropriate client."""
         try:
-            from kbutillib.kb_ws_utils import KBWSUtils
-            from kbutillib.notebook_utils import NotebookUtils
+            if not HAS_KBUTILLIB:
+                raise ImportError("KBUtilLib not found")
             
             # Create a proper combined class
             cache_dir = self.cache_dir
@@ -70,6 +83,9 @@ class KBaseClient:
                         kb_version=kb_env,
                         token=token
                     )
+                    # Ensure token is saved in the token hash
+                    if hasattr(self, 'save_token') and token:
+                        self.save_token(token, namespace="kbase", save_file=False)
             
             self._client = NotebookUtil()
             self._use_kbutillib = True
@@ -116,11 +132,14 @@ class KBaseClient:
         
         if self._use_kbutillib and self._client:
             try:
+                # Ensure KBUtilLib has the token set
+                if hasattr(self._client, 'save_token'):
+                    self._client.save_token(self.token, namespace="kbase")
                 result = self._client.download_blob_file(handle_ref, str(target_path))
                 if result:
                     return Path(result)
             except Exception as e:
-                logger.warning(f"KBUtilLib download_blob_file failed: {e}. Using fallback.")
+                logger.warning(f"KBUtilLib download_blob_file failed: {e}. Using fallback.", exc_info=True)
                 
         return Path(self._download_blob_fallback(handle_ref, str(target_path)))
     
@@ -130,6 +149,15 @@ class KBaseClient:
     
     def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
+        # If the requested env matches the configured env, use the configured URLs
+        if self.kb_env == settings.KB_ENV:
+            return {
+                "workspace": settings.WORKSPACE_URL,
+                "shock": settings.BLOBSTORE_URL,
+                "handle": f"{settings.KBASE_ENDPOINT}/handle_service", 
+            }
+
+        # Fallback for other environments
         endpoints = {
             "appdev": {
                 "workspace": "https://appdev.kbase.us/services/ws",
@@ -168,23 +196,137 @@ class KBaseClient:
         }
         
         endpoints = self._get_endpoints()
-        response = requests.post(
-            endpoints["workspace"],
-            json=payload,
-            headers=headers,
-            timeout=60
-        )
-        response.raise_for_status()
-        result = response.json()
-        
-        if "error" in result:
-            raise ValueError(result["error"].get("message", "Unknown error"))
+        try:
+            response = requests.post(
+                endpoints["workspace"],
+                json=payload,
+                headers=headers,
+                timeout=30  # Reduced from 60 to fail faster
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if "error" in result:
+                error_msg = result["error"].get("message", "Unknown error")
+                error_code = result["error"].get("code", "Unknown")
+                logger.error(f"Workspace API error for {ref}: [{error_code}] {error_msg}")
+                raise ValueError(f"Workspace API error: [{error_code}] {error_msg}")
+        except requests.exceptions.HTTPError as e:
+            # Capture response body for better error messages
+            error_detail = f"HTTP {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                if "error" in error_body:
+                    error_detail = error_body["error"].get("message", str(error_body))
+                else:
+                    error_detail = str(error_body)
+            except Exception:
+                error_detail = e.response.text[:500] if e.response.text else str(e)
+            logger.error(f"Workspace API HTTP error for {ref}: {error_detail}")
+            raise ValueError(f"Workspace service error: {error_detail}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Workspace API request failed for {ref}: {e}")
+            raise ValueError(f"Failed to connect to workspace service: {str(e)}")
             
         data_list = result.get("result", [{}])[0].get("data", [])
         if not data_list:
             raise ValueError(f"No data for: {ref}")
             
         return data_list[0]
+
+    def get_object_with_type(self, ref: str, ws: int | None = None) -> tuple[dict[str, Any], str]:
+        """
+        Get workspace object data along with its type.
+        
+        Args:
+            ref: Object reference or name
+            ws: Workspace ID (optional if ref is full reference)
+            
+        Returns:
+            Tuple of (object_data, object_type)
+            object_type is the full KBase type string (e.g., "KBaseFBA.GenomeDataLakeTables-2.0")
+        """
+        # Build reference
+        if ws and "/" not in str(ref):
+            ref = f"{ws}/{ref}"
+        
+        # First get the object type using get_object_info3
+        object_type = self._get_object_type(ref)
+        
+        # Then get the data using standard method
+        obj_data = self.get_object(ref)
+        
+        return obj_data, object_type
+    
+    def _get_object_type(self, ref: str) -> str:
+        """
+        Get the KBase object type using Workspace.get_object_info3.
+        
+        Args:
+            ref: Object reference
+            
+        Returns:
+            Object type string (e.g., "KBaseFBA.GenomeDataLakeTables-2.0")
+        """
+        headers = {
+            "Authorization": self.token,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "method": "Workspace.get_object_info3",
+            "params": [{"objects": [{"ref": ref}]}],
+            "version": "1.1",
+            "id": "tablescanner-type"
+        }
+        
+        endpoints = self._get_endpoints()
+        try:
+            response = requests.post(
+                endpoints["workspace"],
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if "error" in result:
+                error_msg = result["error"].get("message", "Unknown error")
+                logger.warning(f"Error getting object type for {ref}: {error_msg}")
+                return "Unknown"
+        except requests.exceptions.HTTPError as e:
+            error_detail = f"HTTP {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                if "error" in error_body:
+                    error_detail = error_body["error"].get("message", str(error_body))
+            except Exception:
+                error_detail = e.response.text[:200] if e.response.text else str(e)
+            logger.warning(f"Error getting object type for {ref}: {error_detail}")
+            return "Unknown"
+        except Exception as e:
+            logger.warning(f"Error getting object type for {ref}: {e}")
+            return "Unknown"
+        
+        # get_object_info3 returns: {"result": [{"infos": [[objid, name, type, ...]]}]}
+        infos = result.get("result", [{}])[0].get("infos", [])
+        if infos and infos[0] and len(infos[0]) > 2:
+            return infos[0][2]
+        
+        return "Unknown"
+        
+    def get_object_type_only(self, ref: str) -> str:
+        """
+        Public method to get object type without fetching full data.
+        
+        Args:
+            ref: Object reference
+            
+        Returns:
+            Object type string
+        """
+        return self._get_object_type(ref)
     
     def _download_blob_fallback(self, handle_ref: str, target_path: str) -> str:
         """Download from blobstore via direct API."""
@@ -204,7 +346,7 @@ class KBaseClient:
             resp = requests.post(
                 endpoints["handle"],
                 json=handle_payload,
-                headers={"Authorization": self.token, "Content-Type": "application/json"},
+                headers={"Authorization": f"OAuth {self.token}", "Content-Type": "application/json"},
                 timeout=30
             )
             resp.raise_for_status()
@@ -275,45 +417,27 @@ def get_berdl_table_data(
     return obj
 
 
-def list_pangenomes_from_object(
+def get_object_type(
     berdl_table_id: str,
     auth_token: str,
     kb_env: str = "appdev"
-) -> list[dict[str, Any]]:
+) -> str:
     """
-    List all pangenomes from a BERDLTables object.
+    Get the KBase object type for a workspace object.
 
     Args:
-        berdl_table_id: KBase workspace reference
+        berdl_table_id: KBase workspace reference (e.g., "76990/7/2")
         auth_token: KBase authentication token
         kb_env: KBase environment
 
     Returns:
-        List of pangenome info dictionaries with:
-        - pangenome_id
-        - pangenome_taxonomy
-        - handle_ref
-        - user_genomes
-        - berdl_genomes
+        Object type string (e.g., "KBaseGeneDataLakes.BERDLTables-1.0")
     """
-    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
-    
-    pangenome_data = obj_data.get("pangenome_data", [])
-    
-    pangenomes = []
-    for pg in pangenome_data:
-        pangenomes.append({
-
-            "pangenome_taxonomy": pg.get("pangenome_taxonomy", ""),
-            "user_genomes": pg.get("user_genomes", []),
-            "berdl_genomes": pg.get("berdl_genomes", []),
-            "genome_count": len(pg.get("user_genomes", [])) + len(pg.get("berdl_genomes", [])),
-            "handle_ref": pg.get("sqllite_tables_handle_ref", ""),
-        })
-    
-    return pangenomes
-
-
+    if berdl_table_id.startswith("local:"):
+        return "LocalDatabase"
+        
+    client = KBaseClient(auth_token, kb_env)
+    return client.get_object_type_only(berdl_table_id)
 
 
 
@@ -353,12 +477,16 @@ def download_pangenome_db(
         return db_path
     
     # Fetch object metadata to get handle reference
-    pangenomes = list_pangenomes_from_object(berdl_table_id, auth_token, kb_env)
-    if not pangenomes:
-        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    pangenome_data = obj_data.get("pangenome_data", [])
     
+    if not pangenome_data:
+         raise ValueError(f"No pangenomes found in {berdl_table_id}")
+
     # Take the first (and only expected) pangenome's handle
-    handle_ref = pangenomes[0]["handle_ref"]
+    handle_ref = pangenome_data[0].get("sqllite_tables_handle_ref")
+    if not handle_ref:
+        raise ValueError(f"No handle reference found in {berdl_table_id}")
     
     # Create cache directory
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -380,6 +508,83 @@ def download_pangenome_db(
         raise
     
     return db_path
+
+
+def download_all_pangenome_dbs(
+    berdl_table_id: str,
+    auth_token: str,
+    cache_dir: Path,
+    kb_env: str = "appdev"
+) -> list[dict]:
+    """
+    Download ALL SQLite databases for a BERDL object with multiple pangenomes.
+    
+    For multi-pangenome objects, each pangenome has its own database.
+    Each database is stored in: {cache_dir}/{sanitized_upa}/{db_name}/tables.db
+    
+    Args:
+        berdl_table_id: KBase UPA reference (e.g., "76990/7/2")
+        auth_token: KBase authentication token
+        cache_dir: Local cache directory
+        kb_env: KBase environment (appdev, ci, prod)
+        
+    Returns:
+        List of dicts with db_name, db_display_name, db_path, handle_ref
+    """
+    cache_dir = Path(cache_dir)
+    base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
+    
+    # Fetch object metadata to get all pangenome handles
+    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    pangenome_data = obj_data.get("pangenome_data", [])
+    
+    if not pangenome_data:
+        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+    
+    databases = []
+    client = KBaseClient(auth_token, kb_env, cache_dir)
+    
+    for pg in pangenome_data:
+        handle_ref = pg.get("sqllite_tables_handle_ref")
+        if not handle_ref:
+            logger.warning(f"Pangenome missing handle_ref: {pg.get('pangenome_id', 'unknown')}")
+            continue
+            
+        # Use pangenome_id as the db_name, or generate one from handle
+        db_name = pg.get("pangenome_id") or f"db_{handle_ref.replace('KBH_', '')}"
+        db_display_name = pg.get("pangenome_taxonomy") or db_name
+        
+        # Create per-database subdirectory
+        db_dir = base_dir / db_name
+        db_path = db_dir / "tables.db"
+        
+        # Fast path: use cached file if exists
+        if not db_path.exists():
+            db_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+            
+            try:
+                client.download_blob_file(handle_ref, temp_path)
+                temp_path.rename(db_path)
+                logger.info(f"Downloaded database '{db_name}' to: {db_path}")
+            except Exception as e:
+                temp_path.unlink(missing_ok=True)
+                logger.error(f"Failed to download database '{db_name}': {e}")
+                continue
+        else:
+            logger.info(f"Using cached database '{db_name}': {db_path}")
+        
+        databases.append({
+            "db_name": db_name,
+            "db_display_name": db_display_name,
+            "db_path": db_path,
+            "handle_ref": handle_ref
+        })
+    
+    if not databases:
+        raise ValueError(f"Failed to download any databases from {berdl_table_id}")
+    
+    return databases
 
 
 def get_object_info(
