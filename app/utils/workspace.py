@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 import requests
-from app.utils.cache import get_upa_cache_path
+from app.utils.cache import get_upa_cache_path, sanitize_id
 from uuid import uuid4
 
 # Add KBUtilLib to path
@@ -66,20 +66,10 @@ class KBaseClient:
         
     def _init_client(self):
         """Initialize the appropriate client."""
-        # Disable KBUtilLib for now - use direct API calls with proper timeouts
-        # KBUtilLib can hang indefinitely and doesn't respect timeouts
+        # KBUtilLib is disabled — use direct API calls with proper timeouts.
+        # KBUtilLib can hang indefinitely and doesn't respect timeouts.
         logger.info(f"Using direct API calls (KBUtilLib disabled) for {self.kb_env}")
         self._use_kbutillib = False
-        return
-        
-        # Original KBUtilLib code (disabled):
-        # try:
-        #     if not HAS_KBUTILLIB:
-        #         raise ImportError("KBUtilLib not found")
-        #     ...
-        # except Exception as e:
-        #     logger.warning(f"KBUtilLib not available: {e}. Using fallback.")
-        #     self._use_kbutillib = False
             
     def get_object(self, ref: str, ws: int | None = None) -> dict[str, Any]:
         """
@@ -651,8 +641,11 @@ def download_db_multi(
     cache_dir = Path(cache_dir)
     base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
 
+    # Sanitize db_name to prevent path traversal (e.g., "../../etc")
+    safe_db_name = sanitize_id(db_name)
+
     # Fast path: if already cached, return without hitting Workspace/Shock
-    db_dir = base_dir / db_name
+    db_dir = base_dir / safe_db_name
     db_path = db_dir / "tables.db"
     if db_path.exists():
         return {
@@ -660,6 +653,7 @@ def download_db_multi(
             "db_display_name": db_name,
             "db_path": db_path,
             "handle_ref": None,
+            "was_cached": True,
         }
 
     # Resolve the database handle for the requested db_name
@@ -704,6 +698,7 @@ def download_db_multi(
         "db_display_name": db_display_name,
         "db_path": db_path,
         "handle_ref": handle_ref,
+        "was_cached": False,
     }
 
 

@@ -44,7 +44,6 @@ from app.models import (
     UploadDBResponse,
 )
 from app.utils.workspace import (
-    download_db,
     download_multi_dbs,
     download_db_multi,
     get_object_type,
@@ -676,10 +675,10 @@ async def get_table_stats(
 
 
 # =============================================================================
-# MULTI-DATABASE ENDPOINTS (Path-based routing)
-# /object/{ws_ref}/databases - List all databases in an object
-# /object/{ws_ref}/db/{db_name}/tables - List tables in a specific database
-# /object/{ws_ref}/db/{db_name}/tables/{table}/data - Query data from specific DB
+# MULTI-DATABASE ENDPOINTS (Query-parameter routing)
+# GET /databases?upa=... - List all databases in an object
+# GET /db/{db_name}/tables?upa=... - List tables in a specific database
+# GET /db/{db_name}/tables/{table}/data?upa=... - Query data from specific DB
 # =============================================================================
 
 @router.get(
@@ -711,9 +710,7 @@ async def list_databases_in_object(
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
     """List all databases within a workspace object."""
-    import time
     logger.info(f"[list_databases_in_object] Starting for UPA={upa}, kb_env={kb_env}")
-    start_time = time.time()
     try:
         token = get_auth_token(authorization, kbase_session)
         logger.info(f"[list_databases_in_object] Got token, length={len(token) if token else 0}")
@@ -883,7 +880,7 @@ async def list_tables_in_database(
             tables=tables,
             schemas=schemas,
             total_rows=total_rows,
-            source="Cache" if db_path.exists() else "Downloaded",
+            source="Cache" if target_db.get("was_cached") else "Downloaded",
             api_version="2.1"
         )
         
