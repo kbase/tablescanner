@@ -46,9 +46,9 @@ The entry point for all requests. Handles:
 | Endpoint | Purpose |
 |----------|---------|
 | `/object/{ws_ref}/tables` | List tables in single-DB object |
-| `/object/{ws_ref}/databases` | List databases in multi-DB object (v2.1) |
-| `/object/{ws_ref}/db/{db_name}/tables` | List tables in specific database (v2.1) |
-| `/object/{ws_ref}/db/{db_name}/tables/{table}/data` | Query specific database (v2.1) |
+| `/databases?upa={ws_ref}` | List databases in multi-DB object (v2.1) |
+| `/db/{db_name}/tables?upa={ws_ref}` | List tables in specific database (v2.1) |
+| `/db/{db_name}/tables/{table}/data?upa={ws_ref}` | Query specific database (v2.1) |
 | `/table-data` | Advanced filtering (POST) |
 | `/upload` | Local file upload |
 
@@ -74,8 +74,8 @@ Manages SQLite database connections efficiently:
 Objects containing multiple pangenomes are supported via new endpoints:
 
 ```
-/object/{ws_ref}/databases           → List all databases
-/object/{ws_ref}/db/{db_name}/...    → Access specific database
+/databases?upa={ws_ref}              → List all databases
+/db/{db_name}/...?upa={ws_ref}       → Access specific database
 ```
 
 Each database within an object is stored as a separate SQLite file, enabling:

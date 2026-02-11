@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.config import settings
-from app.utils.workspace import KBaseClient, download_pangenome_db
+from app.utils.workspace import KBaseClient, download_db
 from app.utils.sqlite import validate_table_exists, list_tables
 from app.utils.async_utils import run_sync_in_thread
 from app.utils.cache import sanitize_id
@@ -102,9 +102,9 @@ async def get_object_db_path(
         return db_path
 
     try:
-        # download_pangenome_db already handles caching logic
+        # download_db already handles caching logic
         return await run_sync_in_thread(
-            download_pangenome_db,
+            download_db,
             berdl_table_id,
             token,
             cache_dir,

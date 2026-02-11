@@ -44,8 +44,9 @@ from app.models import (
     UploadDBResponse,
 )
 from app.utils.workspace import (
-    download_pangenome_db,
-    download_all_pangenome_dbs,
+    download_db,
+    download_multi_dbs,
+    download_db_multi,
     get_object_type,
 )
 from app.utils.sqlite import (
@@ -710,14 +711,19 @@ async def list_databases_in_object(
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
     """List all databases within a workspace object."""
+    import time
+    logger.info(f"[list_databases_in_object] Starting for UPA={upa}, kb_env={kb_env}")
+    start_time = time.time()
     try:
         token = get_auth_token(authorization, kbase_session)
+        logger.info(f"[list_databases_in_object] Got token, length={len(token) if token else 0}")
         cache_dir = get_cache_dir()
         berdl_table_id = upa
+        logger.info(f"[list_databases_in_object] About to call download_multi_dbs for {berdl_table_id}")
         
         # Download all databases from the object
         db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
+            download_multi_dbs, berdl_table_id, token, cache_dir, kb_env
         )
         
         schema_service = get_schema_service()
@@ -835,25 +841,14 @@ async def list_tables_in_database(
         cache_dir = get_cache_dir()
         berdl_table_id = upa
         
-        # Download all databases (or use cache)
-        db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
-        )
-        
-        # Find the requested database
-        target_db = None
-        for db_info in db_infos:
-            if db_info["db_name"] == db_name:
-                target_db = db_info
-                break
-        
-        if not target_db:
-            available_dbs = [d["db_name"] for d in db_infos]
-            raise HTTPException(
-                status_code=404,
-                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+        # Download ONLY the requested database (or use cache)
+        try:
+            target_db = await run_sync_in_thread(
+                download_db_multi, berdl_table_id, db_name, token, cache_dir, kb_env
             )
-        
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
         db_path = target_db["db_path"]
         schema_service = get_schema_service()
         
@@ -888,7 +883,7 @@ async def list_tables_in_database(
             tables=tables,
             schemas=schemas,
             total_rows=total_rows,
-            source="Cache" if target_db["db_path"].exists() else "Downloaded",
+            source="Cache" if db_path.exists() else "Downloaded",
             api_version="2.1"
         )
         
@@ -941,25 +936,14 @@ async def get_table_data_from_database(
         cache_dir = get_cache_dir()
         berdl_table_id = upa
         
-        # Download all databases (or use cache)
-        db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
-        )
-        
-        # Find the requested database
-        target_db = None
-        for db_info in db_infos:
-            if db_info["db_name"] == db_name:
-                target_db = db_info
-                break
-        
-        if not target_db:
-            available_dbs = [d["db_name"] for d in db_infos]
-            raise HTTPException(
-                status_code=404,
-                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+        # Download ONLY the requested database (or use cache)
+        try:
+            target_db = await run_sync_in_thread(
+                download_db_multi, berdl_table_id, db_name, token, cache_dir, kb_env
             )
-        
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
         db_path = target_db["db_path"]
         
         # Validate table exists

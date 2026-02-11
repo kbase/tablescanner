@@ -111,7 +111,8 @@ docker run --rm -v $(pwd)/tests:/app/tests tablescanner:test uv run pytest -v
 For endpoints accessing specific databases in multi-DB objects:
 
 ```python
-@router.get("/object/{ws_ref:path}/db/{db_name}/tables")
+@router.get("/db/{db_name}/tables")
+# Use query parameter for UPA: ?upa={ws_ref}
 async def list_tables_in_database(
     ws_ref: str,
     db_name: str,
