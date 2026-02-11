@@ -85,14 +85,16 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 
 ## 3. Multi-Database Access (v2.1)
 
-For objects containing multiple pangenomes or databases.
+For objects containing multiple databases.
 
-### `GET /object/{ws_ref}/databases`
+**Note**: All multi-database endpoints use query parameters for the UPA to avoid path parsing issues with slashes in workspace references.
+
+### `GET /databases?upa={ws_ref}`
 List all databases within an object.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/databases"
+     "https://appdev.kbase.us/services/berdl_table_scanner/databases?upa=76990/7/2"
 ```
 
 **Response:**
@@ -100,27 +102,27 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 {
   "berdl_table_id": "76990/7/2",
   "databases": [
-    {"db_name": "pg_ecoli_k12", "db_display_name": "E. coli K-12", "tables": [...]},
-    {"db_name": "pg_ecoli_o157", "db_display_name": "E. coli O157:H7", "tables": [...]}
+    {"db_name": "GCF_000368685.1", "db_display_name": "E. coli", "tables": [...]},
+    {"db_name": "GCF_004211955.1", "db_display_name": "E. coli O157:H7", "tables": [...]}
   ],
   "has_multiple_databases": true
 }
 ```
 
-### `GET /object/{ws_ref}/db/{db_name}/tables`
+### `GET /db/{db_name}/tables?upa={ws_ref}`
 List tables in a specific database.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables"
+     "https://appdev.kbase.us/services/berdl_table_scanner/db/GCF_000368685.1/tables?upa=76990/Test2"
 ```
 
-### `GET /object/{ws_ref}/db/{db_name}/tables/{table_name}/data`
+### `GET /db/{db_name}/tables/{table_name}/data?upa={ws_ref}`
 Query data from a specific database.
 
 ```bash
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data?limit=100"
+     "https://appdev.kbase.us/services/berdl_table_scanner/db/GCF_000368685.1/tables/Genes/data?upa=76990/Test2&limit=100"
 ```
 
 ---

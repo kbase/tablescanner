@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 import requests
-from app.utils.cache import get_upa_cache_path
+from app.utils.cache import get_upa_cache_path, sanitize_id
 from uuid import uuid4
 
 # Add KBUtilLib to path
@@ -66,34 +66,10 @@ class KBaseClient:
         
     def _init_client(self):
         """Initialize the appropriate client."""
-        try:
-            if not HAS_KBUTILLIB:
-                raise ImportError("KBUtilLib not found")
-            
-            # Create a proper combined class
-            cache_dir = self.cache_dir
-            kb_env = self.kb_env
-            token = self.token
-            
-            class NotebookUtil(NotebookUtils, KBWSUtils):
-                def __init__(self):
-                    super().__init__(
-                        notebook_folder=str(cache_dir),
-                        name="TableScanner",
-                        kb_version=kb_env,
-                        token=token
-                    )
-                    # Ensure token is saved in the token hash
-                    if hasattr(self, 'save_token') and token:
-                        self.save_token(token, namespace="kbase", save_file=False)
-            
-            self._client = NotebookUtil()
-            self._use_kbutillib = True
-            logger.info(f"KBUtilLib client initialized for {self.kb_env}")
-            
-        except Exception as e:
-            logger.warning(f"KBUtilLib not available: {e}. Using fallback.")
-            self._use_kbutillib = False
+        # KBUtilLib is disabled — use direct API calls with proper timeouts.
+        # KBUtilLib can hang indefinitely and doesn't respect timeouts.
+        logger.info(f"Using direct API calls (KBUtilLib disabled) for {self.kb_env}")
+        self._use_kbutillib = False
             
     def get_object(self, ref: str, ws: int | None = None) -> dict[str, Any]:
         """
@@ -106,14 +82,9 @@ class KBaseClient:
         Returns:
             Object data dictionary
         """
-        if self._use_kbutillib and self._client:
-            try:
-                return self._client.get_object(ref, ws=ws)
-            except Exception as e:
-                logger.warning(f"KBUtilLib get_object failed: {e}. Using fallback.")
-                return self._get_object_fallback(ref, ws)
-        else:
-            return self._get_object_fallback(ref, ws)
+        # Prefer fallback path which has proper timeout handling
+        # KBUtilLib can hang indefinitely, so we use direct API calls
+        return self._get_object_fallback(ref, ws)
     
     def download_blob_file(self, handle_ref: str, target_path: Path) -> Path:
         """
@@ -179,9 +150,13 @@ class KBaseClient:
     
     def _get_object_fallback(self, ref: str, ws: int | None = None) -> dict[str, Any]:
         """Get workspace object via direct API call."""
+        import time
         # Build reference
         if ws and "/" not in str(ref):
             ref = f"{ws}/{ref}"
+        
+        logger.info(f"[_get_object_fallback] Starting request for {ref}")
+        start_time = time.time()
             
         headers = {
             "Authorization": self.token,
@@ -196,13 +171,19 @@ class KBaseClient:
         }
         
         endpoints = self._get_endpoints()
+        workspace_url = endpoints["workspace"]
+        logger.info(f"[_get_object_fallback] Calling {workspace_url} with timeout=30")
+        
         try:
+            request_start = time.time()
             response = requests.post(
-                endpoints["workspace"],
+                workspace_url,
                 json=payload,
                 headers=headers,
                 timeout=30  # Reduced from 60 to fail faster
             )
+            request_elapsed = time.time() - request_start
+            logger.info(f"[_get_object_fallback] Request completed in {request_elapsed:.2f}s, status={response.status_code}")
             response.raise_for_status()
             result = response.json()
             
@@ -224,8 +205,13 @@ class KBaseClient:
                 error_detail = e.response.text[:500] if e.response.text else str(e)
             logger.error(f"Workspace API HTTP error for {ref}: {error_detail}")
             raise ValueError(f"Workspace service error: {error_detail}")
+        except requests.exceptions.Timeout as e:
+            elapsed = time.time() - start_time
+            logger.error(f"[_get_object_fallback] Workspace API timeout for {ref} after {elapsed:.2f}s: {e}")
+            raise ValueError(f"Workspace API timeout: Request took longer than 30 seconds")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Workspace API request failed for {ref}: {e}")
+            elapsed = time.time() - start_time
+            logger.error(f"[_get_object_fallback] Workspace API request failed for {ref} after {elapsed:.2f}s: {e}")
             raise ValueError(f"Failed to connect to workspace service: {str(e)}")
             
         data_list = result.get("result", [{}])[0].get("data", [])
@@ -386,7 +372,7 @@ def get_berdl_table_data(
     kb_env: str = "appdev"
 ) -> dict[str, Any]:
     """
-    Fetch BERDLTables object and extract pangenome information.
+    Fetch BERDLTables object and extract database information.
 
     BERDLTables structure:
     {
@@ -408,8 +394,15 @@ def get_berdl_table_data(
     Returns:
         Object data dictionary with pangenome_data
     """
+    import time
+    logger.debug(f"[get_berdl_table_data] Fetching object {berdl_table_id}")
+    start_time = time.time()
+    
     client = KBaseClient(auth_token, kb_env)
     obj = client.get_object(berdl_table_id)
+    
+    elapsed = time.time() - start_time
+    logger.debug(f"[get_berdl_table_data] Got object in {elapsed:.2f}s")
     
     # Handle nested data structures
     if isinstance(obj, dict) and "data" in obj:
@@ -441,16 +434,17 @@ def get_object_type(
 
 
 
-def download_pangenome_db(
+def download_db(
     berdl_table_id: str,
     auth_token: str,
     cache_dir: Path,
     kb_env: str = "appdev"
 ) -> Path:
     """
-    Download the SQLite database for a BERDL object.
+    Download the SQLite database for a BERDLTables object (single-database case).
     
-    Uses UPA-based cache structure: {cache_dir}/{sanitized_upa}/tables.db, where slashes in the UPA are replaced with underscores.
+    Uses UPA-based cache structure: `{cache_dir}/{sanitized_upa}/tables.db`
+    where slashes in the UPA are replaced with underscores.
     
     Implements atomic file operations to prevent race conditions:
     1. Download to temp file with UUID suffix
@@ -483,7 +477,7 @@ def download_pangenome_db(
     if not pangenome_data:
          raise ValueError(f"No pangenomes found in {berdl_table_id}")
 
-    # Take the first (and only expected) pangenome's handle
+    # Take the first (and only expected) handle for the single-DB case
     handle_ref = pangenome_data[0].get("sqllite_tables_handle_ref")
     if not handle_ref:
         raise ValueError(f"No handle reference found in {berdl_table_id}")
@@ -510,17 +504,18 @@ def download_pangenome_db(
     return db_path
 
 
-def download_all_pangenome_dbs(
+def download_multi_dbs(
     berdl_table_id: str,
     auth_token: str,
     cache_dir: Path,
     kb_env: str = "appdev"
 ) -> list[dict]:
     """
-    Download ALL SQLite databases for a BERDL object with multiple pangenomes.
+    Download ALL SQLite databases for a BERDLTables object that contains multiple databases.
     
-    For multi-pangenome objects, each pangenome has its own database.
-    Each database is stored in: {cache_dir}/{sanitized_upa}/{db_name}/tables.db
+    Each database is stored in: `{cache_dir}/{sanitized_upa}/{db_name}/tables.db`
+    
+    Optimized: Only downloads databases that aren't already cached.
     
     Args:
         berdl_table_id: KBase UPA reference (e.g., "76990/7/2")
@@ -531,26 +526,40 @@ def download_all_pangenome_dbs(
     Returns:
         List of dicts with db_name, db_display_name, db_path, handle_ref
     """
+    import time
     cache_dir = Path(cache_dir)
     base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
     
-    # Fetch object metadata to get all pangenome handles
+    logger.info(f"[download_multi_dbs] Starting for {berdl_table_id}")
+    start_time = time.time()
+    
+    # Fetch object metadata to get all database handles
+    logger.debug(f"[download_multi_dbs] Fetching object metadata...")
     obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    logger.debug(f"[download_multi_dbs] Got object metadata in {time.time() - start_time:.2f}s")
+    
     pangenome_data = obj_data.get("pangenome_data", [])
     
     if not pangenome_data:
         raise ValueError(f"No pangenomes found in {berdl_table_id}")
     
+    logger.info(f"[download_multi_dbs] Found {len(pangenome_data)} databases")
+    
     databases = []
     client = KBaseClient(auth_token, kb_env, cache_dir)
     
-    for pg in pangenome_data:
+    # Pre-check cache to avoid unnecessary downloads
+    cached_count = 0
+    download_count = 0
+    
+    for idx, pg in enumerate(pangenome_data):
         handle_ref = pg.get("sqllite_tables_handle_ref")
         if not handle_ref:
-            logger.warning(f"Pangenome missing handle_ref: {pg.get('pangenome_id', 'unknown')}")
+            logger.warning(f"Database {idx+1} missing handle_ref: {pg.get('pangenome_id', 'unknown')}")
             continue
             
-        # Use pangenome_id as the db_name, or generate one from handle
+        # Use pangenome_id as the db_name (this is what the object provides),
+        # or generate one from handle as a fallback.
         db_name = pg.get("pangenome_id") or f"db_{handle_ref.replace('KBH_', '')}"
         db_display_name = pg.get("pangenome_taxonomy") or db_name
         
@@ -559,20 +568,33 @@ def download_all_pangenome_dbs(
         db_path = db_dir / "tables.db"
         
         # Fast path: use cached file if exists
-        if not db_path.exists():
-            db_dir.mkdir(parents=True, exist_ok=True)
-            temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
-            
-            try:
-                client.download_blob_file(handle_ref, temp_path)
-                temp_path.rename(db_path)
-                logger.info(f"Downloaded database '{db_name}' to: {db_path}")
-            except Exception as e:
-                temp_path.unlink(missing_ok=True)
-                logger.error(f"Failed to download database '{db_name}': {e}")
-                continue
-        else:
-            logger.info(f"Using cached database '{db_name}': {db_path}")
+        if db_path.exists():
+            logger.debug(f"[download_multi_dbs] Using cached: {db_name}")
+            cached_count += 1
+            databases.append({
+                "db_name": db_name,
+                "db_display_name": db_display_name,
+                "db_path": db_path,
+                "handle_ref": handle_ref
+            })
+            continue
+        
+        # Download missing database
+        logger.info(f"[download_multi_dbs] Downloading {db_name} ({idx+1}/{len(pangenome_data)})...")
+        db_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+        
+        download_start = time.time()
+        try:
+            client.download_blob_file(handle_ref, temp_path)
+            temp_path.rename(db_path)
+            download_elapsed = time.time() - download_start
+            logger.info(f"[download_multi_dbs] Downloaded {db_name} in {download_elapsed:.2f}s")
+            download_count += 1
+        except Exception as e:
+            temp_path.unlink(missing_ok=True)
+            logger.error(f"[download_multi_dbs] Failed to download {db_name}: {e}", exc_info=True)
+            continue
         
         databases.append({
             "db_name": db_name,
@@ -581,10 +603,105 @@ def download_all_pangenome_dbs(
             "handle_ref": handle_ref
         })
     
+    total_elapsed = time.time() - start_time
+    logger.info(f"[download_multi_dbs] Completed: {len(databases)} databases ({cached_count} cached, {download_count} downloaded) in {total_elapsed:.2f}s")
+    
     if not databases:
         raise ValueError(f"Failed to download any databases from {berdl_table_id}")
     
     return databases
+
+
+def download_db_multi(
+    berdl_table_id: str,
+    db_name: str,
+    auth_token: str,
+    cache_dir: Path,
+    kb_env: str = "appdev"
+) -> dict[str, Any]:
+    """
+    Download ONE SQLite database for a specific database within a multi-database BERDLTables object.
+
+    This avoids the expensive `download_multi_dbs()` behavior for endpoints that only need a
+    single database (e.g. `/db/{db_name}/tables`, `/db/{db_name}/tables/{table}/data`).
+
+    Cache layout (same as multi-download):
+      {cache_dir}/{sanitized_upa}/{db_name}/tables.db
+
+    Args:
+        berdl_table_id: KBase workspace reference (UPA)
+        db_name: The pangenome_id / database name to download (as returned by `/databases`)
+        auth_token: KBase auth token
+        cache_dir: Cache directory
+        kb_env: KBase environment
+
+    Returns:
+        Dict with db_name, db_display_name, db_path, handle_ref
+    """
+    cache_dir = Path(cache_dir)
+    base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
+
+    # Sanitize db_name to prevent path traversal (e.g., "../../etc")
+    safe_db_name = sanitize_id(db_name)
+
+    # Fast path: if already cached, return without hitting Workspace/Shock
+    db_dir = base_dir / safe_db_name
+    db_path = db_dir / "tables.db"
+    if db_path.exists():
+        return {
+            "db_name": db_name,
+            "db_display_name": db_name,
+            "db_path": db_path,
+            "handle_ref": None,
+            "was_cached": True,
+        }
+
+    # Resolve the database handle for the requested db_name
+    obj_data = get_berdl_table_data(berdl_table_id, auth_token, kb_env)
+    pangenome_data = obj_data.get("pangenome_data", [])
+    if not pangenome_data:
+        raise ValueError(f"No pangenomes found in {berdl_table_id}")
+
+    target_pg: dict[str, Any] | None = None
+    available: list[str] = []
+    for pg in pangenome_data:
+        pg_id = pg.get("pangenome_id")
+        if pg_id:
+            available.append(pg_id)
+        if pg_id == db_name:
+            target_pg = pg
+            break
+
+    if not target_pg:
+        raise ValueError(f"Database '{db_name}' not found in object. Available: {available}")
+
+    handle_ref = target_pg.get("sqllite_tables_handle_ref")
+    if not handle_ref:
+        raise ValueError(f"Pangenome '{db_name}' missing sqllite_tables_handle_ref")
+
+    db_display_name = target_pg.get("pangenome_taxonomy") or db_name
+
+    # Download atomically
+    db_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = db_path.with_suffix(f".{uuid4().hex}.tmp")
+    client = KBaseClient(auth_token, kb_env, cache_dir)
+    try:
+        client.download_blob_file(handle_ref, temp_path)
+        temp_path.rename(db_path)
+        logger.info(f"Downloaded database '{db_name}' to: {db_path}")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    return {
+        "db_name": db_name,
+        "db_display_name": db_display_name,
+        "db_path": db_path,
+        "handle_ref": handle_ref,
+        "was_cached": False,
+    }
+
+
 
 
 def get_object_info(

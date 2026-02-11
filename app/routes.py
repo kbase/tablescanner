@@ -44,8 +44,8 @@ from app.models import (
     UploadDBResponse,
 )
 from app.utils.workspace import (
-    download_pangenome_db,
-    download_all_pangenome_dbs,
+    download_multi_dbs,
+    download_db_multi,
     get_object_type,
 )
 from app.utils.sqlite import (
@@ -675,14 +675,14 @@ async def get_table_stats(
 
 
 # =============================================================================
-# MULTI-DATABASE ENDPOINTS (Path-based routing)
-# /object/{ws_ref}/databases - List all databases in an object
-# /object/{ws_ref}/db/{db_name}/tables - List tables in a specific database
-# /object/{ws_ref}/db/{db_name}/tables/{table}/data - Query data from specific DB
+# MULTI-DATABASE ENDPOINTS (Query-parameter routing)
+# GET /databases?upa=... - List all databases in an object
+# GET /db/{db_name}/tables?upa=... - List tables in a specific database
+# GET /db/{db_name}/tables/{table}/data?upa=... - Query data from specific DB
 # =============================================================================
 
 @router.get(
-    "/object/{ws_ref:path}/databases",
+    "/databases",
     tags=["Multi-Database"],
     response_model=TableListResponse,
     summary="List all databases in a workspace object",
@@ -693,6 +693,8 @@ async def get_table_stats(
     including its name, display name, and table list.
     
     **New in v2.1**: Supports objects with multiple pangenomes.
+    
+    **Note**: Use the `upa` query parameter to specify the workspace object reference.
     """,
     responses={
         200: {"description": "Successfully retrieved database list"},
@@ -702,20 +704,23 @@ async def get_table_stats(
     }
 )
 async def list_databases_in_object(
-    ws_ref: str = Path(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2"]),
+    upa: str = Query(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2", "76990/Test2"]),
     kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
     authorization: str | None = Header(None, description="KBase authentication token"),
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
     """List all databases within a workspace object."""
+    logger.info(f"[list_databases_in_object] Starting for UPA={upa}, kb_env={kb_env}")
     try:
         token = get_auth_token(authorization, kbase_session)
+        logger.info(f"[list_databases_in_object] Got token, length={len(token) if token else 0}")
         cache_dir = get_cache_dir()
-        berdl_table_id = ws_ref
+        berdl_table_id = upa
+        logger.info(f"[list_databases_in_object] About to call download_multi_dbs for {berdl_table_id}")
         
         # Download all databases from the object
         db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
+            download_multi_dbs, berdl_table_id, token, cache_dir, kb_env
         )
         
         schema_service = get_schema_service()
@@ -801,7 +806,7 @@ async def list_databases_in_object(
 
 
 @router.get(
-    "/object/{ws_ref:path}/db/{db_name}/tables",
+    "/db/{db_name}/tables",
     tags=["Multi-Database"],
     response_model=TableListResponse,
     summary="List tables in a specific database",
@@ -810,6 +815,8 @@ async def list_databases_in_object(
     
     Use this endpoint when working with objects containing multiple pangenomes.
     The db_name should match one of the database names returned by /databases endpoint.
+    
+    **Note**: Use the `upa` query parameter to specify the workspace object reference.
     """,
     responses={
         200: {"description": "Successfully retrieved table list"},
@@ -819,8 +826,8 @@ async def list_databases_in_object(
     }
 )
 async def list_tables_in_database(
-    ws_ref: str = Path(..., description="KBase workspace object reference", examples=["76990/7/2"]),
-    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12"]),
+    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12", "GCF_000368685.1"]),
+    upa: str = Query(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2", "76990/Test2"]),
     kb_env: str = Query("appdev", description="KBase environment"),
     authorization: str | None = Header(None, description="KBase authentication token"),
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
@@ -829,27 +836,16 @@ async def list_tables_in_database(
     try:
         token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
-        berdl_table_id = ws_ref
+        berdl_table_id = upa
         
-        # Download all databases (or use cache)
-        db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
-        )
-        
-        # Find the requested database
-        target_db = None
-        for db_info in db_infos:
-            if db_info["db_name"] == db_name:
-                target_db = db_info
-                break
-        
-        if not target_db:
-            available_dbs = [d["db_name"] for d in db_infos]
-            raise HTTPException(
-                status_code=404,
-                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+        # Download ONLY the requested database (or use cache)
+        try:
+            target_db = await run_sync_in_thread(
+                download_db_multi, berdl_table_id, db_name, token, cache_dir, kb_env
             )
-        
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
         db_path = target_db["db_path"]
         schema_service = get_schema_service()
         
@@ -884,7 +880,7 @@ async def list_tables_in_database(
             tables=tables,
             schemas=schemas,
             total_rows=total_rows,
-            source="Cache" if target_db["db_path"].exists() else "Downloaded",
+            source="Cache" if target_db.get("was_cached") else "Downloaded",
             api_version="2.1"
         )
         
@@ -899,7 +895,7 @@ async def list_tables_in_database(
 
 
 @router.get(
-    "/object/{ws_ref:path}/db/{db_name}/tables/{table_name}/data",
+    "/db/{db_name}/tables/{table_name}/data",
     tags=["Multi-Database"],
     response_model=TableDataResponse,
     summary="Query data from a specific database",
@@ -908,6 +904,8 @@ async def list_tables_in_database(
     
     This is the recommended endpoint for multi-pangenome objects as it
     explicitly specifies which database to query.
+    
+    **Note**: Use the `upa` query parameter to specify the workspace object reference.
     """,
     responses={
         200: {"description": "Successfully retrieved table data"},
@@ -917,9 +915,9 @@ async def list_tables_in_database(
     }
 )
 async def get_table_data_from_database(
-    ws_ref: str = Path(..., description="KBase workspace object reference", examples=["76990/7/2"]),
-    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12"]),
+    db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12", "GCF_000368685.1"]),
     table_name: str = Path(..., description="Name of the table to query", examples=["Genes"]),
+    upa: str = Query(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2", "76990/Test2"]),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="Maximum rows to return"),
     offset: int = Query(0, ge=0, description="Number of rows to skip"),
     sort_column: str | None = Query(None, description="Column to sort by"),
@@ -933,27 +931,16 @@ async def get_table_data_from_database(
     try:
         token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
-        berdl_table_id = ws_ref
+        berdl_table_id = upa
         
-        # Download all databases (or use cache)
-        db_infos = await run_sync_in_thread(
-            download_all_pangenome_dbs, berdl_table_id, token, cache_dir, kb_env
-        )
-        
-        # Find the requested database
-        target_db = None
-        for db_info in db_infos:
-            if db_info["db_name"] == db_name:
-                target_db = db_info
-                break
-        
-        if not target_db:
-            available_dbs = [d["db_name"] for d in db_infos]
-            raise HTTPException(
-                status_code=404,
-                detail=f"Database '{db_name}' not found. Available: {available_dbs}"
+        # Download ONLY the requested database (or use cache)
+        try:
+            target_db = await run_sync_in_thread(
+                download_db_multi, berdl_table_id, db_name, token, cache_dir, kb_env
             )
-        
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
         db_path = target_db["db_path"]
         
         # Validate table exists
