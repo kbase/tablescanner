@@ -79,7 +79,7 @@ def _seed_single_db_cache(cache_dir: Path, upa: str) -> Path:
 
 def _seed_multi_db_cache(cache_dir: Path, upa: str, db_name: str) -> Path:
     """
-    Place a test database where `download_all_pangenome_dbs` would cache it.
+    Place a test database where `download_multi_dbs` would cache it.
     Layout: {cache_dir}/{safe_upa}/{db_name}/tables.db
     """
     safe = upa.replace("/", "_").replace(":", "_").replace(" ", "_")
@@ -292,7 +292,7 @@ class TestMultiDatabaseDataAccess(unittest.TestCase):
         self.client = TestClient(app)
         self.client.headers["Authorization"] = "Bearer dummy_token"
         self.test_upa = "88888/1/1"
-        # Seed a single-db cache (the /db/ routes still call download_all_pangenome_dbs
+        # Seed a single-db cache (the /db/ routes still call download_multi_dbs
         # which needs KBase, so we test the single-object endpoints with cached data)
         self.db_path = _seed_single_db_cache(
             Path(settings.CACHE_DIR), self.test_upa
