@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 import requests
-from app.utils.cache import get_upa_cache_path, sanitize_id
+from app.utils.cache import get_upa_cache_path
 from uuid import uuid4
 
 # Add KBUtilLib to path
@@ -66,8 +66,10 @@ class KBaseClient:
         
     def _init_client(self):
         """Initialize the appropriate client."""
-        # KBUtilLib is disabled — use direct API calls with proper timeouts.
-        # KBUtilLib can hang indefinitely and doesn't respect timeouts.
+        # Disable KBUtilLib for now - use direct API calls with proper timeouts.
+        # KBUtilLib can hang indefinitely and does not respect timeouts; if
+        # KBUtilLib-based initialization is needed in the future, refer to
+        # version control history for the previous implementation details.
         logger.info(f"Using direct API calls (KBUtilLib disabled) for {self.kb_env}")
         self._use_kbutillib = False
             
@@ -118,6 +120,13 @@ class KBaseClient:
     # FALLBACK METHODS (Direct API calls)
     # =========================================================================
     
+    def _workspace_auth_header(self) -> str:
+        """Return Authorization header value for KBase Workspace API. Workspace expects Bearer token."""
+        t = self.token or ""
+        if t.startswith("Bearer ") or t.startswith("OAuth "):
+            return t
+        return f"Bearer {t}" if t else ""
+
     def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
         # If the requested env matches the configured env, use the configured URLs
@@ -159,10 +168,9 @@ class KBaseClient:
         start_time = time.time()
             
         headers = {
-            "Authorization": self.token,
+            "Authorization": self._workspace_auth_header(),
             "Content-Type": "application/json"
         }
-        
         payload = {
             "method": "Workspace.get_objects2",
             "params": [{"objects": [{"ref": ref}]}],
@@ -255,7 +263,7 @@ class KBaseClient:
             Object type string (e.g., "KBaseFBA.GenomeDataLakeTables-2.0")
         """
         headers = {
-            "Authorization": self.token,
+            "Authorization": self._workspace_auth_header(),
             "Content-Type": "application/json"
         }
         
@@ -539,7 +547,6 @@ def download_multi_dbs(
     logger.debug(f"[download_multi_dbs] Got object metadata in {time.time() - start_time:.2f}s")
     
     pangenome_data = obj_data.get("pangenome_data", [])
-    
     if not pangenome_data:
         raise ValueError(f"No pangenomes found in {berdl_table_id}")
     
@@ -641,11 +648,8 @@ def download_db_multi(
     cache_dir = Path(cache_dir)
     base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
 
-    # Sanitize db_name to prevent path traversal (e.g., "../../etc")
-    safe_db_name = sanitize_id(db_name)
-
     # Fast path: if already cached, return without hitting Workspace/Shock
-    db_dir = base_dir / safe_db_name
+    db_dir = base_dir / db_name
     db_path = db_dir / "tables.db"
     if db_path.exists():
         return {
@@ -653,7 +657,6 @@ def download_db_multi(
             "db_display_name": db_name,
             "db_path": db_path,
             "handle_ref": None,
-            "was_cached": True,
         }
 
     # Resolve the database handle for the requested db_name
@@ -698,7 +701,6 @@ def download_db_multi(
         "db_display_name": db_display_name,
         "db_path": db_path,
         "handle_ref": handle_ref,
-        "was_cached": False,
     }
 
 
