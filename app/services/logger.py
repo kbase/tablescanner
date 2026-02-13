@@ -25,7 +25,10 @@ class MemoryLogHandler(logging.Handler):
                 "source": "backend",
                 "logger": record.name
             })
-        except Exception:
+        except Exception as e:
+            # Log the error to stderr so it's visible during development/debugging
+            import sys
+            print(f"MemoryLogHandler.emit() failed: {e}", file=sys.stderr)
             self.handleError(record)
 
     def get_logs(self, limit: int = 100, level: str = None) -> List[Dict[str, Any]]:
@@ -35,12 +38,10 @@ class MemoryLogHandler(logging.Handler):
         logs = list(self.log_buffer)
         
         if level:
+            # Normalize level; actual filtering can be implemented here later.
             level = level.lower()
-            # Filter by level severity logic could be added here, 
-            # for now just exact match or simple inclusion
-            # But usually we want min level.
-            # Let's just return all for clients to filter or implement simple filtering
-            pass
+            # TODO: Implement level-based filtering (e.g., min level severity)
+            # For now, return all logs and let clients filter
             
         # Return most recent first
         return sorted(logs, key=lambda x: x['timestamp'], reverse=True)[:limit]

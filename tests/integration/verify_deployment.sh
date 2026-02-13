@@ -41,8 +41,23 @@ fi
 echo ""
 echo "3. Testing authentication formats..."
 
-# Get token from .env
-TOKEN=$(grep KB_SERVICE_AUTH_TOKEN .env | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+# Get token from .env (handle spaces and quoted values robustly)
+TOKEN=$(awk '
+/^[[:space:]]*KB_SERVICE_AUTH_TOKEN[[:space:]]*=/ {
+    line = $0
+    # Remove the key and '=' (with optional surrounding spaces)
+    sub(/^[[:space:]]*KB_SERVICE_AUTH_TOKEN[[:space:]]*=/, "", line)
+    # Trim leading/trailing whitespace
+    gsub(/^[[:space:]]*|[[:space:]]*$/, "", line)
+    # Strip a single pair of surrounding quotes, if present
+    if (match(line, /^"([^"]*)"$/)) {
+        line = substr(line, RSTART+1, RLENGTH-2)
+    } else if (match(line, /^'\''([^'\'']*)'\''$/)) {
+        line = substr(line, RSTART+1, RLENGTH-2)
+    }
+    print line
+    exit
+}' .env)
 
 if [ -z "$TOKEN" ]; then
     echo -e "${YELLOW}⚠ No token found in .env, skipping auth tests${NC}"
