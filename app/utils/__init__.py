@@ -2,7 +2,7 @@
 Utils module for TableScanner.
 
 Contains business logic for:
-- KBase Workspace API interactions via KBUtilLib
+- KBase Workspace API interactions via direct HTTP requests (using requests library)
 - Blobstore/Shock downloading
 - Local file caching with age-based expiration
 - SQLite database querying with filtering/sorting/pagination

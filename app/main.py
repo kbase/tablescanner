@@ -23,11 +23,13 @@ from app.exceptions import TableNotFoundError, InvalidFilterError
 
 from contextlib import asynccontextmanager
 from app.utils.cache import cleanup_old_caches
+from app.services.logger import setup_logging
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Clean up old caches and uploads
     try:
+        setup_logging() # Configure in-memory logging
         cleanup_result = cleanup_old_caches(Path(settings.CACHE_DIR))
         # Use print or logger (logger is better if configured, but print works for startup)
         import logging
