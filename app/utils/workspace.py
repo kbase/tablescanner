@@ -11,15 +11,7 @@ from uuid import uuid4
 from app.config import settings
 from app.utils.cache import get_upa_cache_path
 
-# Add KBUtilLib to path if needed (for potential future use or type hinting)
-try:
-    current_file = Path(__file__).resolve()
-    root_dir = current_file.parent.parent.parent
-    lib_path = root_dir / "lib" / "KBUtilLib" / "src"
-    if lib_path.exists() and str(lib_path) not in sys.path:
-        sys.path.append(str(lib_path))
-except Exception:
-    pass
+
 
 logger = logging.getLogger(__name__)
 
