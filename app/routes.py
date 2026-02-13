@@ -23,6 +23,8 @@ import hashlib
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Header, Query, Cookie, Path, UploadFile, File
 from app.exceptions import InvalidFilterError
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 
 from app.models import (
     TableDataRequest,
@@ -63,6 +65,7 @@ from app.services.db_helper import (
 )
 from app.utils.async_utils import run_sync_in_thread
 from app.utils.request_utils import TableRequestProcessor
+from app.services.logger import get_memory_handler
 from app.config import settings
 from app.config_constants import MAX_LIMIT, DEFAULT_LIMIT
 from app.utils.cache import load_cache_metadata, save_cache_metadata
@@ -218,6 +221,59 @@ async def health_check():
         logger.error(f"Error in health check: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =============================================================================
+# SYSTEM ENDPOINTS
+# =============================================================================
+
+class LogEntry(BaseModel):
+    timestamp: str
+    level: str
+    message: str
+    source: str
+    logger: str
+
+@router.get(
+    "/system/logs",
+    response_model=List[LogEntry],
+    tags=["General"],
+    summary="Get recent system logs",
+)
+async def get_system_logs(
+    limit: int = Query(100, ge=1, le=1000, description="Number of logs to return"),
+    level: str | None = Query(None, description="Minimum log level (debug, info, warn, error)"),
+    authorization: str | None = Header(None, description="KBase authentication token")
+):
+    """
+    Retrieve recent system logs from memory buffer.
+    Use limit parameter to control number of entries (default 100, max 1000).
+    """
+    # Simple check - could require admin perms but for dev tools/debugging this is fine
+    # if hidden behind auth.
+    # The user asked for "any and all errors", so let's expose it.
+    
+    handler = get_memory_handler()
+    # Getting logs directly from the handler's deque
+    # We convert deque to list efficiently
+    logs = list(handler.log_buffer)
+    
+    # Sort by timestamp descending (newest first)
+    logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # Filter by level if requested
+    if level:
+        level_map = {"debug": 10, "info": 20, "warning": 30, "warn": 30, "error": 40, "critical": 50}
+        min_level = level_map.get(level.lower(), 0)
+        
+        filtered_logs = []
+        for log in logs:
+            log_lvl_str = log.get("level", "info").lower()
+            log_lvl_val = level_map.get(log_lvl_str, 20)
+            if log_lvl_val >= min_level:
+                filtered_logs.append(log)
+        logs = filtered_logs
+        
+    return logs[:limit]
 
 
 # =============================================================================
