@@ -2,8 +2,6 @@ FROM ghcr.io/astral-sh/uv:python3.13-alpine
 RUN apk --no-cache add curl git
 WORKDIR /app
 
-
-
 # Copy application code and dependencies
 COPY app ./app
 COPY pyproject.toml /app/pyproject.toml
