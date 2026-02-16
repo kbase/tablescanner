@@ -94,7 +94,7 @@ def get_auth_token(
     The service does NOT use a shared token for production access.
     
     Priority:
-    1. Authorization header (Bearer token or plain token)
+    1. Authorization header (raw token in `Authorization` header)
     2. kbase_session cookie
     3. KB_SERVICE_AUTH_TOKEN from settings (LEGACY: for local testing only)
     
@@ -424,7 +424,7 @@ async def upload_database(
     # Using curl with Authorization header
     curl -X GET \\
       "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables?kb_env=appdev" \\
-      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Authorization: YOUR_KBASE_TOKEN" \\
       -H "accept: application/json"
     
     # Using curl with cookie
@@ -435,7 +435,7 @@ async def upload_database(
     ```
     
     **Authentication:**
-    - Authorization header: `Authorization: Bearer YOUR_TOKEN` or `Authorization: YOUR_TOKEN`
+    - Authorization header: `Authorization: YOUR_TOKEN`
     - Cookie: `kbase_session=YOUR_TOKEN`
     - Environment variable: `KB_SERVICE_AUTH_TOKEN` (for service-to-service)
     """,
@@ -626,13 +626,13 @@ async def list_tables_by_object(
     # Get first 10 rows from Genes table
     curl -X GET \\
       "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=10&kb_env=appdev" \\
-      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Authorization: YOUR_KBASE_TOKEN" \\
       -H "accept: application/json"
     
     # Search and sort
     curl -X GET \\
       "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=20&offset=0&search=kinase&sort_column=gene_name&sort_order=ASC&kb_env=appdev" \\
-      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Authorization: YOUR_KBASE_TOKEN" \\
       -H "accept: application/json"
     ```
     """,
@@ -1042,7 +1042,7 @@ async def get_table_data_from_database(
     # Simple query
     curl -X POST \\
       "https://appdev.kbase.us/services/berdl_table_scanner/table-data" \\
-      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Authorization: YOUR_KBASE_TOKEN" \\
       -H "Content-Type: application/json" \\
       -d '{
         "berdl_table_id": "76990/7/2",
@@ -1054,7 +1054,7 @@ async def get_table_data_from_database(
     # Query with filters
     curl -X POST \\
       "https://appdev.kbase.us/services/berdl_table_scanner/table-data" \\
-      -H "Authorization: Bearer YOUR_KBASE_TOKEN" \\
+      -H "Authorization: YOUR_KBASE_TOKEN" \\
       -H "Content-Type: application/json" \\
       -d '{
         "berdl_table_id": "76990/7/2",

@@ -78,12 +78,12 @@ def create_app() -> FastAPI:
 
     ### Authentication
     Authentication can be provided in three ways (in order of priority):
-    1. **Authorization header**: `Authorization: Bearer <token>` or `Authorization: <token>`
+    1. **Authorization header**: `Authorization: <token>`
     2. **kbase_session cookie**: Set the `kbase_session` cookie with your KBase session token
     3. **Service token**: Configure `KB_SERVICE_AUTH_TOKEN` environment variable (for service-to-service calls)
     
     **Using Swagger UI**: Click the "Authorize" button (🔒) at the top of this page to enter your authentication token.
-    - For **BearerAuth**: Enter your KBase token (Bearer prefix is optional)
+    - For **BearerAuth**: Enter your KBase token (no prefix required)
     - For **CookieAuth**: Set the `kbase_session` cookie in your browser's developer tools
     
     Note: Cookie authentication may have limitations in Swagger UI due to browser security restrictions.

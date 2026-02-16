@@ -39,11 +39,11 @@ cp .env.example .env  # Edit with your KBase Token
 curl "https://appdev.kbase.us/services/berdl_table_scanner/health"
 
 # List tables (requires auth)
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
 
 # Query data
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=100"
 
 # Upload local database

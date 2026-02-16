@@ -63,7 +63,7 @@ curl -X POST "https://appdev.kbase.us/services/berdl_table_scanner/upload" \
 Works with KBase UPA or the local handle returned above.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
 ```
 
@@ -71,7 +71,7 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 Retrieve detailed column metrics and sample values.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/stats"
 ```
 
@@ -79,7 +79,7 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 Comprehensive filtering and pagination.
 
 ```bash
-curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
+curl -X POST -H "Authorization: $KB_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
        "berdl_table_id": "76990/7/2",
@@ -97,15 +97,15 @@ For objects containing multiple pangenomes/databases:
 
 ```bash
 # List all databases in an object
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/databases?upa=76990/7/2"
 
 # List tables in a specific database
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/db/pg_ecoli_k12/tables?upa=76990/7/2"
 
 # Query data from a specific database
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/db/pg_ecoli_k12/tables/Genes/data?upa=76990/7/2&limit=100"
 ```
 

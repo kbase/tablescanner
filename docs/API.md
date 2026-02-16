@@ -14,7 +14,7 @@ The **TableScanner** service provides read-only access to SQLite databases store
 
 **Each user must provide their own KBase authentication token.** The service does not use a shared/service-level token for production access.
 
-- **Header (recommended)**: `Authorization: <token>` or `Authorization: Bearer <token>`
+- **Header (recommended)**: `Authorization: <token>`
 - **Cookie**: `kbase_session=<token>` (useful for browser-based clients like DataTables Viewer)
 
 > **Note for Developers**: The `KB_SERVICE_AUTH_TOKEN` environment variable is available as a legacy fallback for local testing only. It should NOT be relied upon in production.
@@ -51,7 +51,7 @@ Access databases via KBase Workspace Object Reference (UPA, e.g., `76990/7/2`).
 List tables for a BERDLTables object.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables"
 ```
 
@@ -67,7 +67,7 @@ Query table data.
 - `search` (Global text search)
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/data?limit=100&search=kinase"
 ```
 
@@ -75,7 +75,7 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 Get detailed statistics for all columns in a table.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/tables/Genes/stats"
 ```
 
@@ -93,7 +93,7 @@ For objects containing multiple databases.
 List all databases within an object.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/databases?upa=76990/7/2"
 ```
 
@@ -113,7 +113,7 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 List tables in a specific database.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/db/GCF_000368685.1/tables?upa=76990/Test2"
 ```
 
@@ -121,7 +121,7 @@ curl -H "Authorization: Bearer $KB_TOKEN" \
 Query data from a specific database.
 
 ```bash
-curl -H "Authorization: Bearer $KB_TOKEN" \
+curl -H "Authorization: $KB_TOKEN" \
      "https://appdev.kbase.us/services/berdl_table_scanner/db/GCF_000368685.1/tables/Genes/data?upa=76990/Test2&limit=100"
 ```
 
@@ -166,7 +166,7 @@ Complex query endpoint supporting advanced filtering and aggregations.
 | `is_not_null` | Is not NULL | `{"column": "product", "operator": "is_not_null"}` |
 
 ```bash
-curl -X POST -H "Authorization: Bearer $KB_TOKEN" \
+curl -X POST -H "Authorization: $KB_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"berdl_table_id": "76990/7/2", "table_name": "Genes", "limit": 100}' \
      "https://appdev.kbase.us/services/berdl_table_scanner/table-data"
