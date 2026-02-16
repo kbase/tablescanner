@@ -47,22 +47,16 @@ class KBaseClient:
     def _workspace_auth_header(self) -> str:
         """Return Authorization header value.
         
-        KBase workspace API expects "Bearer <token>".
-        This method ensures we send the token with the correct prefix.
+        KBase workspace API expects just the token string, NOT "Bearer <token>".
+        This method ensures we send the raw token without any prefix.
         """
         if not self.token:
             return ""
-        
+        # Ensure we strip any Bearer prefix that might have been passed incorrectly
         token = self.token.strip()
-        # If it already has Bearer, just return it
         if token.startswith("Bearer "):
-            return token
-        # If it has OAuth (Shock format), convert or keep? 
-        # WS strictly wants Bearer for JSON-RPC.
-        if token.startswith("OAuth "):
-            token = token[6:].strip()
-            
-        return f"Bearer {token}"
+            token = token[7:].strip()
+        return token
 
     def _get_endpoints(self) -> dict[str, str]:
         """Get endpoints for current environment."""
