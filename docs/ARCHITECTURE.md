@@ -105,7 +105,7 @@ Each database within an object is stored as a separate SQLite file, enabling:
 ### Multi-Database Request (v2.1)
 
 ```
-1. Request: GET /object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data
+1. Request: GET /db/pg_ecoli_k12/tables/Genes/data?upa=76990/7/2&limit=100
 2. Resolution: DB Helper downloads ALL databases in object
 3. Selection: Multi-DB resolver selects "pg_ecoli_k12" database
 4. Connection: QueryService gets connection for specific DB file

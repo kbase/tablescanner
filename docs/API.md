@@ -233,6 +233,38 @@ All data query endpoints return a consistent response structure:
 
 ---
 
+## 6. System Logs
+
+### `GET /system/logs`
+
+Retrieve recent in-memory logs from the TableScanner service. This is primarily used by frontend tools (like the DataTables Viewer) for debugging and monitoring.
+
+**Query Parameters:**
+- `limit` (optional, default: 100, max: 1000) – number of log entries to return
+- `level` (optional) – minimum log level (`debug`, `info`, `warn`, `error`, `critical`)
+
+**Example:**
+
+```bash
+curl "https://appdev.kbase.us/services/berdl_table_scanner/system/logs?limit=50&level=error"
+```
+
+**Response (simplified):**
+
+```json
+[
+  {
+    "timestamp": "2026-02-13T10:26:17.512994",
+    "level": "error",
+    "message": "Error accessing object database 99999/999/999: ...",
+    "source": "backend",
+    "logger": "app.utils.workspace"
+  }
+]
+```
+
+---
+
 ## Error Responses
 
 | Status | Description |

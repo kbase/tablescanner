@@ -44,7 +44,7 @@ cp .env.example .env
 
 **Each user must provide their own KBase authentication token.** The service prioritizes user-provided tokens over shared service tokens.
 
-- **Header (Recommended)**: `Authorization: Bearer <token>`
+- **Header (Recommended)**: `Authorization: <token>` 
 - **Cookie**: `kbase_session=<token>` (Used by DataTables Viewer)
 - **Legacy Fallback**: `KB_SERVICE_AUTH_TOKEN` in `.env` is for **local testing only**
 
@@ -98,15 +98,15 @@ For objects containing multiple pangenomes/databases:
 ```bash
 # List all databases in an object
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/databases"
+     "https://appdev.kbase.us/services/berdl_table_scanner/databases?upa=76990/7/2"
 
 # List tables in a specific database
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables"
+     "https://appdev.kbase.us/services/berdl_table_scanner/db/pg_ecoli_k12/tables?upa=76990/7/2"
 
 # Query data from a specific database
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/db/pg_ecoli_k12/tables/Genes/data?limit=100"
+     "https://appdev.kbase.us/services/berdl_table_scanner/db/pg_ecoli_k12/tables/Genes/data?upa=76990/7/2&limit=100"
 ```
 
 ## Performance & Optimization

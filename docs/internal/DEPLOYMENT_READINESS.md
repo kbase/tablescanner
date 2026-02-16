@@ -26,9 +26,9 @@
 ### ✅ Code Requirements
 
 - [x] **Multi-Database Endpoints Implemented**
-  - `GET /object/{ws_ref}/databases`
-  - `GET /object/{ws_ref}/db/{db_name}/tables`
-  - `GET /object/{ws_ref}/db/{db_name}/tables/{table}/data`
+  - `GET /databases?upa={ws_ref}`
+  - `GET /db/{db_name}/tables?upa={ws_ref}`
+  - `GET /db/{db_name}/tables/{table}/data?upa={ws_ref}`
 
 - [x] **Upload Improvements**
   - SHA-256 deduplication
@@ -152,7 +152,10 @@ curl -X POST https://appdev.kbase.us/services/berdl_table_scanner/upload \
 
 # Test multi-database endpoint
 curl -H "Authorization: Bearer $KB_TOKEN" \
-     "https://appdev.kbase.us/services/berdl_table_scanner/object/76990/7/2/databases"
+     "https://appdev.kbase.us/services/berdl_table_scanner/databases?upa=76990/7/2"
+
+# Test system logs (for deployment diagnostics)
+curl "https://appdev.kbase.us/services/berdl_table_scanner/system/logs?limit=50"
 ```
 
 ---
