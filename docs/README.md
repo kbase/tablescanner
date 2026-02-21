@@ -2,9 +2,13 @@
 
 **TableScanner** is a high-performance, read-only API service for querying SQLite databases stored in [KBase](https://kbase.us). It powers the DataTables Viewer and other applications requiring fast access to tabular data.
 
-## Production URL
+## Service URLs
 
-**`https://appdev.kbase.us/services/berdl_table_scanner`**
+| Environment | URL |
+|-------------|-----|
+| **AppDev** | `https://appdev.kbase.us/services/berdl_table_scanner` |
+| **Production** | `https://berdl.kbase.us/apis/dev_tablescanner` |
+| **Local** | `http://localhost:8000` |
 
 ## Documentation
 

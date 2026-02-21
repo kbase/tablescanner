@@ -28,7 +28,7 @@ The service will be available at `http://localhost:8000`. API documentation is a
 
 ```bash
 cp .env.example .env
-# Edit .env and set local development parameters
+# Edit .env — set KB_ENV=appdev for AppDev, KB_ENV=prod for production
 ./scripts/dev.sh
 ```
 
@@ -37,7 +37,7 @@ cp .env.example .env
 | Environment | URL |
 |-------------|-----|
 | **AppDev** | `https://appdev.kbase.us/services/berdl_table_scanner` |
-| **Production** | `https://kbase.us/services/berdl_table_scanner` |
+| **Production** | `https://berdl.kbase.us/apis/dev_tablescanner` |
 | **Local** | `http://localhost:8000` |
 
 ## Authentication
