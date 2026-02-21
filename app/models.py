@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.config_constants import MAX_LIMIT
 
 
@@ -71,7 +72,7 @@ class TableDataRequest(BaseModel):
         examples=[{"gene_name": "kinase", "organism": "E. coli"}]
     )
     kb_env: str = Field(
-        "appdev",
+        settings.KB_ENV,
         description="KBase environment"
     )
 

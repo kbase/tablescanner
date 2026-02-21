@@ -28,7 +28,7 @@ class KBaseClient:
     def __init__(
         self,
         token: str | None,
-        kb_env: str = "appdev",
+        kb_env: str = settings.KB_ENV,
         cache_dir: Path | None = None
     ):
         """
@@ -269,7 +269,7 @@ class KBaseClient:
 def get_berdl_table_data(
     berdl_table_id: str,
     auth_token: str,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> dict[str, Any]:
     client = KBaseClient(auth_token, kb_env)
     return client.get_object(berdl_table_id)
@@ -278,7 +278,7 @@ def get_berdl_table_data(
 def get_object_type(
     berdl_table_id: str,
     auth_token: str,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> str:
     if berdl_table_id.startswith("local:"):
         return "LocalDatabase"
@@ -288,7 +288,7 @@ def get_object_type(
 def get_object_info(
     object_ref: str,
     auth_token: str,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> dict[str, Any]:
     client = KBaseClient(auth_token, kb_env)
     return client.get_object(object_ref)
@@ -298,7 +298,7 @@ def download_db(
     berdl_table_id: str,
     auth_token: str,
     cache_dir: Path,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> Path:
     cache_dir = Path(cache_dir)
     db_dir = get_upa_cache_path(cache_dir, berdl_table_id)
@@ -339,7 +339,7 @@ def download_multi_dbs(
     berdl_table_id: str,
     auth_token: str,
     cache_dir: Path,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> list[dict]:
     cache_dir = Path(cache_dir)
     base_dir = get_upa_cache_path(cache_dir, berdl_table_id)
@@ -401,7 +401,7 @@ def download_db_multi(
     db_name: str,
     auth_token: str,
     cache_dir: Path,
-    kb_env: str = "appdev"
+    kb_env: str = settings.KB_ENV
 ) -> dict[str, Any]:
     cache_dir = Path(cache_dir)
     base_dir = get_upa_cache_path(cache_dir, berdl_table_id)

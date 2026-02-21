@@ -472,7 +472,7 @@ async def upload_database(
 )
 async def list_tables_by_object(
     ws_ref: str = Path(..., description="KBase workspace object reference (UPA format: workspace_id/object_id/version)", examples=["76990/7/2"]),
-    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment", examples=["appdev", "prod"]),
     authorization: str | None = Header(None, description="KBase authentication token (Bearer token or plain token)", examples=["Bearer YOUR_KBASE_TOKEN"]),
     kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
 ):
@@ -651,7 +651,7 @@ async def get_table_data_by_object(
     sort_column: str | None = Query(None, description="Column name to sort by", examples=["gene_name"]),
     sort_order: str | None = Query("ASC", description="Sort order: ASC or DESC", examples=["ASC"]),
     search: str | None = Query(None, description="Global text search across all columns", examples=["kinase"]),
-    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment", examples=["appdev", "prod"]),
     authorization: str | None = Header(None, description="KBase authentication token", examples=["Bearer YOUR_KBASE_TOKEN"]),
     kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
 ):
@@ -701,7 +701,7 @@ async def get_table_data_by_object(
 async def get_table_stats(
     ws_ref: str = Path(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2"]),
     table_name: str = Path(..., description="Name of the table to analyze", examples=["Genes"]),
-    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment", examples=["appdev", "prod"]),
     authorization: str | None = Header(None, description="KBase authentication token", examples=["Bearer YOUR_KBASE_TOKEN"]),
     kbase_session: str | None = Cookie(None, description="KBase session cookie", examples=["YOUR_KBASE_TOKEN"])
 ):
@@ -761,7 +761,7 @@ async def get_table_stats(
 )
 async def list_databases_in_object(
     upa: str = Query(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2", "76990/Test2"]),
-    kb_env: str = Query("appdev", description="KBase environment", examples=["appdev"]),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment", examples=["appdev", "prod"]),
     authorization: str | None = Header(None, description="KBase authentication token"),
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
@@ -884,7 +884,7 @@ async def list_databases_in_object(
 async def list_tables_in_database(
     db_name: str = Path(..., description="Database name within the object", examples=["pg_ecoli_k12", "GCF_000368685.1"]),
     upa: str = Query(..., description="KBase workspace object reference (UPA format)", examples=["76990/7/2", "76990/Test2"]),
-    kb_env: str = Query("appdev", description="KBase environment"),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment"),
     authorization: str | None = Header(None, description="KBase authentication token"),
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
@@ -979,7 +979,7 @@ async def get_table_data_from_database(
     sort_column: str | None = Query(None, description="Column to sort by"),
     sort_order: str | None = Query("ASC", description="Sort order: ASC or DESC"),
     search: str | None = Query(None, description="Global text search"),
-    kb_env: str = Query("appdev", description="KBase environment"),
+    kb_env: str = Query(settings.KB_ENV, description="KBase environment"),
     authorization: str | None = Header(None, description="KBase authentication token"),
     kbase_session: str | None = Cookie(None, description="KBase session cookie")
 ):
@@ -1083,7 +1083,7 @@ async def query_table_data(
     try:
         token = get_auth_token(authorization, kbase_session)
         cache_dir = get_cache_dir()
-        kb_env = getattr(request, 'kb_env', 'appdev') or 'appdev'
+        kb_env = getattr(request, 'kb_env', settings.KB_ENV) or settings.KB_ENV
         
         filters = request.col_filter if request.col_filter else request.query_filters
         
